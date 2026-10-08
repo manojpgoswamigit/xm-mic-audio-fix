@@ -1,0 +1,12 @@
+# Logs and scratch files
+*.log
+
+# Backups created by install.sh (e.g. 51-bt-calls.conf.bak.*)
+*.bak.*
+
+# Raw mic captures from `xm test` (in case any are left in the repo)
+*.raw
+
+# OS/editor cruft
+.DS_Store
+*~
