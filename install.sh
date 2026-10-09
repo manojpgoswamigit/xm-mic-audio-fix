@@ -5,8 +5,10 @@
 # Installs:
 #   1. CLI helper:  ~/.local/bin/xm
 #   2. WirePlumber drop-in: ~/.config/wireplumber/wireplumber.conf.d/51-bt-calls.conf
+#   3. (optional) KDE Plasma panel widget, with --widget
 #
-# Both are user-level and fully reversible via uninstall.sh
+# 1 and 2 are user-level and fully reversible via uninstall.sh
+# 3 is user-level and fully reversible via uninstall-widget.sh / rollback.sh
 # ==============================================================================
 
 set -euo pipefail
@@ -116,3 +118,17 @@ echo -e "  ${BOLD}xm status${NC}  -> show current profile"
 echo
 echo -e "In Teams/Zoom set Speaker = your headset and Microphone = your headset."
 echo
+
+# --- Optional KDE Plasma widget ----------------------------------------------
+if [ "${WITH_WIDGET:-0}" = "1" ]; then
+    if [ -x "${SCRIPT_DIR}/install-widget.sh" ]; then
+        bash "${SCRIPT_DIR}/install-widget.sh"
+    else
+        echo -e "${YELLOW}[!] install-widget.sh not found; skipping the widget.${NC}"
+    fi
+elif command -v kpackagetool6 >/dev/null 2>&1; then
+    echo -e "${CYAN}Want it in the KDE panel as one click?${NC}"
+    echo -e "    ${BOLD}./install-widget.sh${NC}"
+    echo -e "  (or ${BOLD}WITH_WIDGET=1 ./install.sh${NC} to do both at once)"
+    echo
+fi

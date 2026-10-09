@@ -7,6 +7,12 @@
 # Raw mic captures from `xm test` (in case any are left in the repo)
 *.raw
 
+# Widget build state: manifests, backups and rendered PNGs live in $HOME
+*.local.state
+
+# Working notes / planning documents, never part of the release
+implementation_plan.md
+
 # OS/editor cruft
 .DS_Store
 *~

@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+
+  <!--
+    XM Headset applet configuration.
+
+    Every entry here is safe at its default: the applet resolves
+    ~/.local/bin/xm on its own and polls at a deliberately slow rate.
+  -->
+
+  <group name="General">
+    <entry name="xmPath" type="String">
+      <default></default>
+      <label>Command to run</label>
+      <whatsthis>
+        Full path of the xm command. Leave empty to use ~/.local/bin/xm.
+      </whatsthis>
+    </entry>
+
+    <entry name="pollInterval" type="Int">
+      <default>2</default>
+      <min>1</min>
+      <max>30</max>
+      <label>Refresh interval (seconds)</label>
+      <whatsthis>
+        How often the applet asks xm for the current profile. A lower number
+        keeps the panel icon more accurate but costs a little CPU. xm answers
+        in about 15 milliseconds, so 2 seconds is already plenty.
+      </whatsthis>
+    </entry>
+
+    <entry name="showText" type="Bool">
+      <default>true</default>
+      <label>Show the current profile and result messages in the popup</label>
+      <whatsthis>
+        Turn off for a compact popup with just the buttons.
+      </whatsthis>
+    </entry>
+
+    <entry name="confirmReset" type="Bool">
+      <default>true</default>
+      <label>Ask before restoring audio defaults</label>
+      <whatsthis>
+        Show a confirmation before the "Restore audio defaults" button runs.
+        Keep this on: that is the one action here that changes your
+        WirePlumber setup.
+      </whatsthis>
+    </entry>
+
+    <entry name="notifications" type="Bool">
+      <default>true</default>
+      <label>Show a notification when an action finishes</label>
+      <whatsthis>
+        Useful for the slow actions (reset, fix) that you start and then look
+        away from. Turn off for a completely silent applet.
+      </whatsthis>
+    </entry>
+  </group>
+</kcfg>
