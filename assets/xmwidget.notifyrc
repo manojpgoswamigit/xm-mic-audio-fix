@@ -1,0 +1,9 @@
+[Global]
+IconName=xmwidget
+Name=XM Headset
+Comment=XM Headset Profile Switcher
+
+[Event/xm]
+Name=XM Action
+Comment=Headset action or profile switch completed
+Action=Popup

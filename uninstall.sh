@@ -28,6 +28,17 @@ if [ "${EUID:-$(id -u)}" -eq 0 ]; then
     exit 1
 fi
 
+# If the Plasma widget is installed, route through the graded uninstaller so
+# the applet leaves the panel and its package is removed cleanly too.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "${HOME}/.local/share/plasma/plasmoids/com.manojpgoswami.xmwidget" ] \
+   || [ -f "${HOME}/.local/state/xm-widget/manifest" ]; then
+    echo -e " ${YELLOW}Note:${NC} the KDE panel widget is installed."
+    echo -e "       Removing it too (equivalent to ./rollback.sh)."
+    echo
+    exec "${SCRIPT_DIR}/uninstall-widget.sh" --all --restart
+fi
+
 rm -f "$BIN_TARGET"
 echo -e " ${GREEN}✓${NC} Removed $BIN_TARGET"
 
@@ -45,3 +56,6 @@ fi
 
 echo
 echo -e "${GREEN}${BOLD}✓ Uninstallation complete!${NC}"
+echo
+echo -e "${CYAN}Tip:${NC} if you also installed the KDE panel widget, run"
+echo -e "     ${BOLD}./rollback.sh${NC}   (removes the widget too, with a full restore)"
