@@ -1,0 +1,23 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Name": "manojpgoswami"
+            }
+        ],
+        "Category": "Multimedia",
+        "Description": "One click switch for the XM Bluetooth headset: Call (mic + speaker) or Music (hi-fi)",
+        "EnabledByDefault": false,
+        "Icon": "xmwidget",
+        "Id": "com.manojpgoswami.xmwidget",
+        "License": "MIT",
+        "Name": "XM Headset",
+        "Version": "1.0",
+        "Website": "https://github.com/manojpgoswamigit/xm-mic-audio-fix"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "Multimedia"
+}
