@@ -186,7 +186,7 @@ Adding the widget to your KDE Plasma workspace takes just a few seconds.
 
 ```mermaid
 graph LR
-    A[🎧 Listening to Music] -->|1. Join Meeting| B[Click 'Call' / xm call]
+    A[🎧 Listening to Music] -->|1. Want to join a Meeting| B[Click 'Call' / xm call]
     B -->|HFP Active| C[🎙️ Meeting in Progress]
     C -->|2. Meeting Finished| D[Click 'Music' / xm music]
     D -->|A2DP Active| A
