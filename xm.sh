@@ -26,29 +26,42 @@
 set -euo pipefail
 
 APP_NAME="xm"
+WP_CONF="${HOME}/.config/wireplumber/wireplumber.conf.d/51-bt-calls.conf"
 
 # ------------------------------------------------------------------------------
-# Dependency check
+# Dependency helpers
 # ------------------------------------------------------------------------------
-check_deps() {
-    local missing=()
-    command -v pactl        >/dev/null 2>&1 || missing+=("pactl (pipewire-pulse)")
-    command -v bluetoothctl >/dev/null 2>&1 || missing+=("bluetoothctl (bluez-utils)")
-    command -v parec        >/dev/null 2>&1 || missing+=("parec (pipewire-pulse)")
-    command -v python3      >/dev/null 2>&1 || missing+=("python3")
+have() { command -v "$1" >/dev/null 2>&1; }
+
+require() {
+    local missing=() c
+    for c in "$@"; do
+        have "$c" || missing+=("$c")
+    done
     if [ "${#missing[@]}" -gt 0 ]; then
-        echo "Missing required commands:" >&2
-        printf '  - %s\n' "${missing[@]}" >&2
+        echo "Missing required commands: ${missing[*]}" >&2
+        echo "Install the PipeWire/BlueZ tools for your distribution (see README)." >&2
         exit 1
     fi
+}
+
+json_str() {
+    # Escape a value for a single-line JSON string.
+    local s="$1"
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    s=${s//$'\n'/ }
+    s=${s//$'\r'/ }
+    printf '%s' "$s"
 }
 
 # ------------------------------------------------------------------------------
 # Helpers - all auto-detect the connected Bluetooth headset card / MAC
 # ------------------------------------------------------------------------------
 find_card() {
+    have pactl || return 1
     local c
-    c=$(timeout 3 pactl list cards short 2>/dev/null | awk '/bluez_card/{print $2; exit}')
+    c=$(timeout 3 pactl list cards short 2>/dev/null | awk '/bluez_card/{print $2; exit}' || true)
     if [ -z "$c" ]; then
         echo "No Bluetooth audio card found. Is your headset connected?" >&2
         return 1
@@ -57,20 +70,25 @@ find_card() {
 }
 
 find_mac() {
-    local mac
-    mac=$(timeout 3 pactl list cards 2>/dev/null \
-        | awk '/bluez_card/{f=1} f && /api.bluez5.address/{gsub(/"/,"",$2); print $2; exit}')
+    local mac=""
+    if have pactl; then
+        mac=$(timeout 3 pactl list cards 2>/dev/null \
+            | awk '/bluez_card/{f=1} f && /api.bluez5.address/ {sub(/.*= *"/,""); sub(/".*/,""); print; exit}' || true)
+    fi
     if [ -n "$mac" ]; then
         printf '%s\n' "$mac"
         return 0
     fi
     # Fallback to paired Bluetooth devices if card is not yet in pactl
-    mac=$(timeout 3 bluetoothctl devices 2>/dev/null \
-        | awk '/(WH|WF)-[0-9]+XM|XM[0-9]|Sony/ {print $2; exit}')
-    if [ -n "$mac" ]; then
-        printf '%s\n' "$mac"
-        return 0
+    if have bluetoothctl; then
+        mac=$(timeout 3 bluetoothctl devices 2>/dev/null \
+            | awk '/(WH|WF)-[0-9]+XM|XM[0-9]|Sony/ {print $2; exit}' || true)
+        if [ -n "$mac" ]; then
+            printf '%s\n' "$mac"
+            return 0
+        fi
     fi
+    return 0
 }
 
 current_profile() {
@@ -78,39 +96,121 @@ current_profile() {
     timeout 3 pactl list cards 2>/dev/null | awk -v c="$card" '
         $0 ~ "Name: "c {f=1}
         f && /Active Profile:/ {sub(/.*Active Profile: /,""); print; exit}
-    '
+    ' || true
 }
 
-set_profile() {
-    local card prof; card=$(find_card) || return 1; prof="$1"
-    echo "Switching '$card' -> $prof ..."
-    timeout 5 pactl set-card-profile "$card" "$prof" || { echo "Failed to set profile '$prof'." >&2; return 1; }
-    sleep 1
-    echo "Active profile now: $(current_profile)"
-}
-
-reconnect() {
-    local mac; mac=$(find_mac)
-    if [ -z "$mac" ]; then
-        echo "Could not determine headset MAC; skipping reconnect." >&2
-        return 1
+# Human name of the headset, from BlueZ when possible, else from the card.
+device_name() {
+    local mac name card
+    mac=$(find_mac 2>/dev/null) || mac=""
+    if [ -n "$mac" ] && have bluetoothctl; then
+        name=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null \
+            | awk -F': ' '/^[[:space:]]*Name:/{print $2; exit}' || true)
+        if [ -n "$name" ]; then
+            printf '%s\n' "$name"
+            return 0
+        fi
     fi
-    echo "Resetting Bluetooth link on $mac ..."
-    timeout 6 bluetoothctl disconnect "$mac" >/dev/null 2>&1 || true
-    sleep 2
-    timeout 12 bluetoothctl connect    "$mac" >/dev/null 2>&1 || true
-    # Wait up to 5s for the audio card to settle in PipeWire
+    card=$(find_card 2>/dev/null) || card=""
+    if [ -n "$card" ]; then
+        timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" '
+            $0 ~ "Name: "c {f=1}
+            f && /device.description/ {sub(/.*= "/,""); sub(/".*/,""); print; exit}
+        ' || true
+    fi
+    return 0
+}
+
+# Codec of the active profile (LDAC, AAC, SBC, SBC-XQ, mSBC, CVSD ...).
+active_codec() {
+    local card prof
+    card=$(find_card 2>/dev/null) || return 0
+    prof=$(current_profile 2>/dev/null) || return 0
+    [ -n "$prof" ] || return 0
+    timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" -v p="$prof" '
+        $0 ~ "Name: "c {f=1}
+        f && $0 ~ "^[ \t]*"p":" {
+            sub(/^[ \t]*/,"")
+            if (match($0, /codec [^),]*/)) {
+                s = substr($0, RSTART + 6, RLENGTH - 6)
+                print s
+            }
+            exit
+        }
+    ' || true
+}
+
+mic_source() {
+    have pactl || return 0
+    timeout 3 pactl list sources short 2>/dev/null | awk '/bluez_input/{print $2; exit}' || true
+}
+
+device_connected() {
+    have bluetoothctl || return 0
+    local mac
+    mac=$(find_mac 2>/dev/null) || mac=""
+    [ -n "$mac" ] || return 0
+    timeout 2 bluetoothctl info "$mac" 2>/dev/null | awk '/Connected:/{print $2; exit}' || true
+}
+
+wait_for_mic_source() {
     local i=0
-    while [ $i -lt 10 ]; do
-        if timeout 1 pactl list cards short 2>/dev/null | grep -q 'bluez_card'; then
-            break
+    while [ "$i" -lt 8 ]; do
+        if [ -n "$(mic_source)" ]; then
+            return 0
         fi
         sleep 0.5
         i=$((i+1))
     done
-    echo "Reconnected."
+    return 1
 }
 
+list_card_profiles() {
+    local card; card=$(find_card 2>/dev/null) || return 0
+    timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" '
+        $0 ~ "Name: "c {f=1}
+        f && /^[ \t]*Profiles:/ {inp=1; next}
+        f && /Active Profile:/ {inp=0}
+        f && inp && /^[ \t]+[a-z0-9_-]+: / {
+            sub(/^[ \t]+/,""); sub(/:.*/,""); print "  " $0
+        }
+    ' || true
+}
+
+# Best-effort: BlueZ only exports Battery1 when the headset advertises it.
+battery_level() {
+    local mac="$1" v path
+    [ -n "$mac" ] || return 0
+    if have bluetoothctl; then
+        v=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null \
+            | awk -F'[()]' '/Battery Percentage/{print $2; exit}' || true)
+        if [ -n "$v" ]; then
+            printf '%s\n' "$v"
+            return 0
+        fi
+    fi
+    have busctl || return 0
+    path=$(timeout 2 busctl --system tree org.bluez 2>/dev/null \
+        | tr -d ' │├└─' \
+        | awk -v m="dev_${mac//:/_}" '$0 ~ m"$" {print; exit}' || true)
+    [ -n "$path" ] || return 0
+    v=$(timeout 2 busctl --system get-property org.bluez "$path" \
+        org.bluez.Battery1 Percentage 2>/dev/null | awk '{print $2; exit}' || true)
+    [ -n "$v" ] && printf '%s\n' "$v"
+    return 0
+}
+
+wait_for_card() {
+    local i=0
+    while [ "$i" -lt 20 ]; do
+        if timeout 1 pactl list cards short 2>/dev/null | grep -q 'bluez_card'; then
+            return 0
+        fi
+        sleep 0.5
+        i=$((i+1))
+    done
+    return 1
+}
 
 # ------------------------------------------------------------------------------
 # Machine-readable status (used by the KDE Plasma widget).
@@ -123,17 +223,17 @@ reconnect() {
 #     error  - dependency missing or the stack could not be queried
 # Must stay fast: it is polled every couple of seconds by the panel applet.
 # ------------------------------------------------------------------------------
-print_machine_status() {
-    command -v pactl >/dev/null 2>&1 || { echo "error"; return 0; }
+machine_status() {
+    have pactl || { echo "error"; return 0; }
 
     local card
     card=$(find_card 2>/dev/null) || card=""
     if [ -z "$card" ]; then
         # Card not in pactl. Check if headset is connected in bluetoothctl:
-        local mac; mac=$(find_mac 2>/dev/null) || mac=""
-        if [ -n "$mac" ]; then
-            local conn
-            conn=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null | awk '/Connected:/{print $2}')
+        local mac conn
+        mac=$(find_mac 2>/dev/null) || mac=""
+        if [ -n "$mac" ] && have bluetoothctl; then
+            conn=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null | awk '/Connected:/{print $2}' || true)
             if [ "$conn" = "yes" ]; then
                 echo "off"
                 return 0
@@ -147,14 +247,369 @@ print_machine_status() {
     prof=$(timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" '
         $0 ~ "Name: "c {f=1}
         f && /Active Profile:/ {sub(/.*Active Profile: /,""); print; exit}
-    ')
+    ' || true)
 
     case "$prof" in
         headset-head-unit*) echo "hfp"  ;;
         a2dp-sink*)         echo "a2dp" ;;
-        off)                echo "off"  ;;
+        off|"")             echo "off"  ;;
         *)                  echo "error";;
     esac
+}
+
+profile_label() {
+    case "$1" in
+        headset-head-unit*) echo "HFP call profile, mic + speaker" ;;
+        a2dp-sink*)         echo "A2DP music profile, no mic" ;;
+        off|"")             echo "standby" ;;
+        *)                  echo "$1" ;;
+    esac
+}
+
+print_info_json() {
+    local state card prof mac name codec mic battery conn wp
+    state=$(machine_status)
+    card=$(find_card 2>/dev/null) || card=""
+    prof=$(current_profile 2>/dev/null) || prof=""
+    mac=$(find_mac 2>/dev/null) || mac=""
+    name=$(device_name)
+    codec=$(active_codec)
+    mic=$(mic_source)
+    conn=$(device_connected)
+    battery=$(battery_level "$mac")
+    case "$battery" in
+        ''|*[!0-9]*) battery="" ;;
+    esac
+    if [ -f "$WP_CONF" ]; then wp=true; else wp=false; fi
+
+    [ -n "$mac" ] || mac=""
+
+    printf '{"state":"%s","profile":%s,"codec":%s,"device":%s,"mac":%s,' \
+        "$(json_str "$state")" \
+        "$([ -n "$prof" ]   && printf '"%s"' "$(json_str "$prof")"   || printf 'null')" \
+        "$([ -n "$codec" ]  && printf '"%s"' "$(json_str "$codec")"  || printf 'null')" \
+        "$([ -n "$name" ]   && printf '"%s"' "$(json_str "$name")"   || printf 'null')" \
+        "$([ -n "$mac" ]    && printf '"%s"' "$(json_str "$mac")"    || printf 'null')"
+    printf '"mic":%s,"connected":%s,"wp_config":%s,"battery":%s}\n' \
+        "$([ -n "$mic" ] && printf 'true' || printf 'false')" \
+        "$([ "$conn" = "yes" ] && printf 'true' || printf 'false')" \
+        "$wp" \
+        "$([ -n "$battery" ] && printf '%s' "$battery" || printf 'null')"
+}
+
+print_info_human() {
+    local state card prof mac name codec mic
+    state=$(machine_status)
+    card=$(find_card 2>/dev/null) || card=""
+    prof=$(current_profile 2>/dev/null) || prof=""
+    mac=$(find_mac 2>/dev/null) || mac=""
+    name=$(device_name)
+    codec=$(active_codec)
+    mic=$(mic_source)
+
+    if [ -n "$name" ]; then
+        if [ -n "$mac" ]; then
+            echo "Device:  $name ($mac)"
+        else
+            echo "Device:  $name"
+        fi
+    fi
+    if [ "$state" = "none" ]; then
+        echo "State:   none (headset not connected)"
+    elif [ "$state" = "error" ]; then
+        echo "State:   error (could not read the audio profile)"
+    else
+        echo "State:   $state ($(profile_label "$prof"))"
+    fi
+    [ -n "$prof" ]  && echo "Profile: $prof"
+    [ -n "$codec" ] && echo "Codec:   $codec"
+    if [ -n "$mic" ]; then
+        echo "Mic:     available ($mic)"
+    else
+        echo "Mic:     not available in this profile"
+    fi
+    if [ -f "$WP_CONF" ]; then
+        echo "Config:  xm WirePlumber drop-in installed"
+    else
+        echo "Config:  WirePlumber defaults (auto-switching on)"
+    fi
+    local battery; battery=$(battery_level "$mac")
+    [ -n "$battery" ] && echo "Battery: ${battery}%"
+    return 0
+}
+
+# ------------------------------------------------------------------------------
+# Microphone self-test
+#   human: prints progress + VERDICT line (unchanged behaviour)
+#   --json: stdout is ONLY a JSON object, progress goes to stderr
+# ------------------------------------------------------------------------------
+run_mic_test() {
+    local mode="${1:-human}"
+    require pactl parec python3
+
+    local prof src raw
+    prof=$(current_profile 2>/dev/null) || prof=""
+    src=$(mic_source)
+
+    if [ -z "$src" ]; then
+        if [ "$mode" = "json" ]; then
+            printf '{"ok":false,"error":"no-mic-source","verdict":"error","label":"NO MIC","levels":[]}\n'
+        else
+            echo "No headset mic source found; run '$APP_NAME call' first." >&2
+        fi
+        return 1
+    fi
+
+    raw=$(mktemp "${TMPDIR:-/tmp}/xmmic.XXXXXX.raw")
+    # shellcheck disable=SC2064
+    trap "rm -f '$raw'" EXIT
+
+    if [ "$mode" = "json" ]; then
+        echo "Recording 5s from $src ..." >&2
+    else
+        case "$prof" in
+            headset-head-unit*) : ;;
+            *) echo "NOTE: not in a mic-capable profile ($prof). Run '$APP_NAME call' first." ;;
+        esac
+        echo "Recording 5s from $src - TALK NOW (say a few sentences)..."
+    fi
+
+    timeout 6 parec --rate=48000 --channels=1 --format=s16le -d "$src" "$raw" 2>/dev/null || true
+
+    python3 - "$raw" "$mode" <<'PY'
+import array, json, math, sys
+
+path, mode = sys.argv[1], sys.argv[2]
+a = array.array("h")
+try:
+    a.frombytes(open(path, "rb").read())
+except OSError:
+    a = array.array("h")
+
+peak = max((abs(x) for x in a), default=0)
+duration = round(len(a) / 48000.0, 2)
+dbfs = round(20 * math.log10(peak / 32768.0), 1) if peak > 0 else -96.0
+
+# Exactly 50 bars, independent of how many samples parec managed to deliver.
+# Each bar is the peak of its slice, mapped from -60..0 dBFS to 0..1 so quiet
+# speech is still visible without pretending that silence is loud.
+bar_count = 50
+levels = []
+for i in range(bar_count):
+    lo = (i * len(a)) // bar_count
+    hi = ((i + 1) * len(a)) // bar_count
+    chunk = a[lo:hi] if hi > lo else a[lo:lo + 1]
+    p = max((abs(x) for x in chunk), default=0)
+    if p > 0:
+        db = 20 * math.log10(p / 32768.0)
+        level = max(0.0, min(1.0, (db + 60.0) / 60.0))
+    else:
+        level = 0.0
+    levels.append(round(level, 3))
+
+if peak > 800:
+    verdict, label = "live", "LIVE"
+elif peak > 150:
+    verdict, label = "quiet", "QUIET"
+else:
+    verdict, label = "silent", "SILENT"
+
+if mode == "json":
+    print(json.dumps({
+        "ok": True,
+        "verdict": verdict,
+        "label": label,
+        "peak": peak,
+        "peak_dbfs": dbfs,
+        "duration": duration,
+        "levels": levels,
+    }))
+else:
+    print(f"samples={len(a)}  peak={peak}/32767  ({dbfs:.1f} dBFS)")
+    if verdict == "live":
+        print("VERDICT: LIVE - microphone is working")
+    elif verdict == "quiet":
+        print("VERDICT: QUIET - barely hearing you; move closer / raise headset mic volume")
+    else:
+        print("VERDICT: SILENT - run 'xm reset' then 'xm test' again")
+PY
+}
+
+# ------------------------------------------------------------------------------
+# Reconnect / link recovery
+# ------------------------------------------------------------------------------
+reconnect() {
+    require bluetoothctl pactl
+
+    local mac
+    mac=$(find_mac)
+    if [ -z "$mac" ]; then
+        echo "Could not determine headset MAC; skipping reconnect." >&2
+        return 1
+    fi
+
+    local attempt conn
+    for attempt in 1 2 3; do
+        echo "Resetting Bluetooth link on $mac (attempt $attempt/3) ..."
+        timeout 6  bluetoothctl disconnect "$mac" >/dev/null 2>&1 || true
+        sleep 1
+        timeout 12 bluetoothctl connect    "$mac" >/dev/null 2>&1 || true
+
+        if wait_for_card; then
+            conn=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null \
+                | awk '/Connected:/{print $2; exit}' || true)
+            # The card only exists while the link is up. An empty bluetoothctl
+            # answer is not a failure: trust the card rather than reconnect a
+            # second and third time for a status string we could not read.
+            if [ "$conn" != "no" ]; then
+                echo "Reconnected."
+                return 0
+            fi
+        fi
+        sleep 2
+    done
+
+    echo "Could not reconnect the headset after 3 attempts." >&2
+    echo "Check that it is powered on, in range, and not connected to another device." >&2
+    return 1
+}
+
+profile_available() {
+    local card prof; card=$(find_card 2>/dev/null) || return 1; prof="$1"
+    timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" -v p="$prof" '
+        $0 ~ "Name: "c {f=1}
+        f && /^[ \t]*Profiles:/ {inp=1; next}
+        f && /Active Profile:/ {inp=0}
+        f && inp && $0 ~ "^[ \t]*"p":" {found=1}
+        END {exit !found}
+    '
+}
+
+set_profile() {
+    local card prof; card=$(find_card) || return 1; prof="$1"
+
+    # Right after a reconnect the card can appear before all its profiles do.
+    # Wait briefly instead of failing the first switch after a Fix.
+    local i=0
+    while [ "$i" -lt 16 ] && ! profile_available "$prof"; do
+        sleep 0.5
+        i=$((i+1))
+    done
+
+    echo "Switching '$card' -> $prof ..."
+    timeout 5 pactl set-card-profile "$card" "$prof" || {
+        echo "Failed to set profile '$prof'." >&2
+        echo "Available profiles on this card:" >&2
+        list_card_profiles >&2
+        return 1
+    }
+    sleep 1
+    echo "Active profile now: $(current_profile)"
+}
+
+# ------------------------------------------------------------------------------
+# Doctor - one screen that answers "why is my mic not working?"
+# ------------------------------------------------------------------------------
+run_doctor() {
+    local fails=0 warns=0
+    pass() { printf '  OK    %s\n' "$*"; }
+    warn() { printf '  WARN  %s\n' "$*"; warns=$((warns+1)); }
+    fail() { printf '  FAIL  %s\n' "$*"; fails=$((fails+1)); }
+
+    echo "xm doctor - Bluetooth headset audio check"
+    echo
+
+    echo "Stack"
+    for c in pactl bluetoothctl parec python3; do
+        if have "$c"; then
+            pass "$c found"
+        else
+            fail "$c missing"
+        fi
+    done
+    if pactl info >/dev/null 2>&1; then
+        pass "PulseAudio/PipeWire server reachable"
+    else
+        fail "cannot reach the PipeWire/PulseAudio server"
+    fi
+    if systemctl --user is-active --quiet wireplumber 2>/dev/null; then
+        pass "WirePlumber service is running"
+    elif pgrep -x wireplumber >/dev/null 2>&1; then
+        pass "WirePlumber process is running"
+    else
+        warn "WirePlumber does not look active"
+    fi
+    if systemctl is-active --quiet bluetooth 2>/dev/null; then
+        pass "Bluetooth service is running"
+    else
+        warn "Bluetooth service does not look active (could not check)"
+    fi
+
+    echo
+    echo "Headset"
+    local mac name card prof codec src conn
+    mac=$(find_mac 2>/dev/null) || mac=""
+    name=$(device_name)
+    card=$(find_card 2>/dev/null) || card=""
+    prof=$(current_profile 2>/dev/null) || prof=""
+    codec=$(active_codec)
+    src=$(mic_source)
+    conn=$(device_connected)
+
+    if [ -n "$name" ]; then
+        pass "headset: $name${mac:+ ($mac)}"
+    else
+        fail "no Bluetooth headset detected"
+    fi
+    if [ "$conn" = "yes" ]; then
+        pass "Bluetooth link connected"
+    elif [ -n "$mac" ]; then
+        warn "headset is paired but not connected"
+    fi
+    if [ -n "$card" ]; then
+        pass "audio card present: $card"
+    else
+        fail "no bluez audio card in PipeWire"
+    fi
+    if [ -n "$prof" ]; then
+        pass "active profile: $prof${codec:+ (codec $codec)}"
+        case "$prof" in
+            headset-head-unit*) pass "mic-capable profile is active" ;;
+            a2dp-sink*)         warn "music profile active - no microphone (run: $APP_NAME call)" ;;
+            *)                  warn "profile '$prof' is not a known call/music profile" ;;
+        esac
+    fi
+    if [ -n "$src" ]; then
+        pass "headset microphone source: $src"
+    else
+        warn "no headset microphone source (normal in A2DP / between calls)"
+    fi
+
+    echo
+    echo "xm configuration"
+    if [ -f "$WP_CONF" ]; then
+        pass "WirePlumber drop-in installed"
+    else
+        warn "WirePlumber drop-in missing - automatic profile switching is on"
+    fi
+    if [ -n "$prof" ] && [ -n "$card" ]; then
+        pass "profiles offered by the card:"
+        timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" '
+            $0 ~ "Name: "c {f=1}
+            f && /^[ \t]+[a-z0-9-]+: / && !/Active Profile/ {sub(/^[ \t]+/,""); sub(/:.*/,""); print "          " $0}
+        ' | head -8
+    fi
+
+    echo
+    if [ "$fails" -gt 0 ]; then
+        echo "Result: $fails problem(s), $warns warning(s)."
+        return 1
+    elif [ "$warns" -gt 0 ]; then
+        echo "Result: no hard failures, $warns warning(s)."
+        return 0
+    fi
+    echo "Result: everything looks healthy."
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -164,16 +619,20 @@ usage() {
     cat <<EOF
 $APP_NAME - Bluetooth XM headset meeting helper (Sony WH-1000XM3/XM4/XM5, WF-1000XM earbuds & similar)
 
-Usage: $APP_NAME <command>
+Usage: $APP_NAME <command> [--json]
 
   call      Switch to HFP/mSBC   -> microphone + speaker BOTH work (use before a meeting)
   music     Switch to A2DP/LDAC  -> best-quality output only, no mic (use after a meeting)
   status    Show the current Bluetooth audio profile
-           (add --machine to print one bare token: a2dp | hfp | none | error,
+           (add --machine to print one bare token: a2dp | hfp | off | none | error,
             used by the KDE Plasma widget)
+  info      Show device, codec, mic and config details (add --json for machines)
   test      Record 5s from the mic and report LIVE / QUIET / SILENT (talk during it)
+           (add --json for the verdict and a 50-bar level waveform)
   reset     Reconnect the headset to clear a dead/silent mic link
-  fix       reset + switch to 'call' profile in one shot (pre-meeting one-liner)
+  reconnect Alias for reset
+  fix       reconnect + switch to 'call' profile in one shot (pre-meeting one-liner)
+  doctor    Diagnose PipeWire, WirePlumber, BlueZ, profile and mic state
   defaults-reset
             Remove the WirePlumber drop-in and restore automatic profile switching
 
@@ -190,76 +649,71 @@ cmd="${1:-}"
 # --- exits non-zero on a machine that simply lacks the audio stack. It reports
 # --- 'error' itself instead, and always prints exactly one token on stdout.
 if [ "$cmd" = "status" ] && [ "${2:-}" = "--machine" ]; then
-    print_machine_status
+    machine_status
     exit 0
 fi
 
-check_deps
-
 case "$cmd" in
     call)
+        require pactl bluetoothctl
         set_profile headset-head-unit
         echo "In Teams/Zoom set Speaker = your headset and Microphone = your headset."
         ;;
     music)
+        require pactl bluetoothctl
         set_profile a2dp-sink
         ;;
     status)
+        require pactl bluetoothctl
+        card=$(find_card 2>/dev/null) || card=""
+        if [ -z "$card" ]; then
+            echo "State:   none - no headset connected"
+            name=$(device_name)
+            [ -n "$name" ] && echo "Device:  $name (paired, not connected)"
+            exit 0
+        fi
         echo "Profile: $(current_profile)"
+        echo "Device:  $(device_name)"
+        codec=$(active_codec)
+        [ -n "$codec" ] && echo "Codec:   $codec"
+        ;;
+
+    info)
+        if [ "${2:-}" = "--json" ]; then
+            print_info_json
+        else
+            print_info_human
+        fi
         ;;
     test)
-        prof=$(current_profile)
-        case "$prof" in
-            headset-head-unit|headset-head-unit-cvsd) : ;;
-            *) echo "NOTE: not in a mic-capable profile ($prof). Run '$APP_NAME call' first." ;;
-        esac
-        src=$(pactl list sources short 2>/dev/null | awk '/bluez_input/{print $2; exit}')
-        if [ -z "$src" ]; then
-            echo "No headset mic source found; run '$APP_NAME call' first." >&2
-            exit 1
+        if [ "${2:-}" = "--json" ]; then
+            run_mic_test json
+        else
+            run_mic_test human
         fi
-        raw=$(mktemp /tmp/xmmic.XXXXXX.raw)
-        echo "Recording 5s from $src - TALK NOW (say a few sentences)..."
-        timeout 6 parec --rate=48000 --channels=1 --format=s16le -d "$src" "$raw" 2>/dev/null || true
-        python3 - "$raw" <<'PY'
-import sys, array
-a = array.array("h"); a.frombytes(open(sys.argv[1],"rb").read())
-mx = max((abs(x) for x in a), default=0)
-print(f"samples={len(a)}  peak={mx}/32767")
-if mx > 800:
-    print("VERDICT: LIVE - microphone is working")
-elif mx > 150:
-    print("VERDICT: QUIET - barely hearing you; move closer / raise headset mic volume")
-else:
-    print("VERDICT: SILENT - run 'xm reset' then 'xm test' again")
-PY
-        rm -f "$raw"
         ;;
-    reset)
+    reset|reconnect)
         reconnect
         echo "Profile now: $(current_profile)"
         ;;
     fix)
-        reconnect || true
-        # Wait up to 5s for the PulseAudio card to settle in PipeWire after reconnect
-        local i=0
-        while [ $i -lt 10 ]; do
-            if timeout 1 pactl list cards short 2>/dev/null | grep -q 'bluez_card'; then
-                break
-            fi
-            sleep 0.5
-            i=$((i+1))
-        done
+        reconnect
         set_profile headset-head-unit
-        echo "Ready for meeting (microphone + speaker on the headset)."
+        # Give PipeWire a moment to publish the SCO source after the switch.
+        if wait_for_mic_source; then
+            echo "Ready for meeting (microphone + speaker on the headset)."
+        else
+            echo "Switched to Call, but the mic source is not visible yet." >&2
+            echo "If people cannot hear you, run '$APP_NAME doctor'." >&2
+        fi
+        ;;
+    doctor)
+        run_doctor
         ;;
     defaults-reset)
-        # Remove the WirePlumber drop-in and let Plasma's default automatic
-        # A2DP/HFP switching take over again. Fully reversible with install.sh.
-        conf="${HOME}/.config/wireplumber/wireplumber.conf.d/51-bt-calls.conf"
-        if [ -f "$conf" ]; then
-            rm -f "$conf"
-            echo "Removed ${conf}"
+        if [ -f "$WP_CONF" ]; then
+            rm -f "$WP_CONF"
+            echo "Removed ${WP_CONF}"
         else
             echo "The xm WirePlumber drop-in was not installed."
         fi
