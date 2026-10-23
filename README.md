@@ -20,7 +20,7 @@
   <img src="assets/widget-demo.gif" alt="XM Headset KDE Plasma Widget Showcase" width="760">
 </p>
 
-<p><em>One-click profile switching, real-time status monitoring, quick mic diagnostic self-test, and full Breeze Light & Dark theme support.</em></p>
+<p><em>One-click profile switching, device/codec/battery status, a real waveform mic test, link reconnect, and full Breeze Light & Dark theme support.</em></p>
 
 </div>
 
@@ -90,18 +90,17 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
 </p>
 
 #### ✨ Key Features
-- **Tactile Profile Cards**: Large **Call** and **Music** buttons with active state glow and 2px borders.
-- **Live Status Pill**: Shows real-time connection state (`Connected - A2DP`, `Connected - HFP`, `Standby`, `Working...`).
+- **Device-aware header**: headset name, live connection/profile state, active codec (`LDAC`, `AAC`, `mSBC`) and battery percentage.
+- **Tactile Profile Cards**: Large **Call** and **Music** targets with an active badge, hover feedback, and 2px accent borders.
+- **Real microphone test**: one click switches to Call if needed, records 5 seconds, and draws a **50-bar waveform from the actual samples** with `LIVE` / `QUIET` / `SILENT`, peak dBFS and duration.
+- **Connection recovery**: **Reconnect** retries the Bluetooth link up to three times, waits for the audio card and its profiles, and verifies the link before reporting success. **Fix** = Reconnect + Call.
+- **Keyboard shortcuts**: <kbd>C</kbd> Call · <kbd>M</kbd> Music · <kbd>T</kbd> Test · <kbd>R</kbd> Reconnect · <kbd>F</kbd> Fix · <kbd>Esc</kbd> close About/confirmation.
 - **Color-Coded Panel Tray Icon**:
   - 🟢 **Green**: Call mode (HFP active, mic and speaker ready for meetings).
   - 🔵 **Blue / Accent**: Music mode (A2DP hi-fi audio).
   - 🟠 **Amber**: Command running or device waking from standby.
   - ⚪ **Grey**: Disconnected / no Bluetooth headset detected.
 - **Adaptive Light & Dark Engine**: Curated high-contrast semantic palettes for **Breeze Dark**, **Breeze Light**, and custom KDE themes.
-- **Quick Rescue Helpers**:
-  - 🎙️ **Test mic**: 5-second voice check with a real-time `LIVE` / `QUIET` / `SILENT` verdict.
-  - 🔄 **Reset link**: Reconnects Bluetooth to clear dead SCO links.
-  - 🧰 **Fix**: Runs a clean link reset and engages Call mode in one step (~6s).
 - **Non-blocking Execution**: Commands run asynchronously via Plasma's job runner with hard timeouts; plasmashell never hangs or freezes.
 
 #### 🌗 Light & Dark Theme Support
@@ -109,11 +108,16 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
 The widget automatically adapts its luminance, card surfaces, borders, and badge icons to your active KDE theme:
 
 <p align="center">
-  <img src="assets/screenshot-dark.png" alt="Breeze Dark Theme" width="48%">
-  &nbsp;
   <img src="assets/screenshot-light.png" alt="Breeze Light Theme" width="48%">
+  &nbsp;
+  <img src="assets/screenshot-dark.png" alt="Breeze Dark Theme" width="48%">
 </p>
-<p align="center"><em>Breeze Dark (left) vs Breeze Light (right) — High contrast, crisp borders, and native typography.</em></p>
+<p align="center"><em>Breeze Light (left) vs Breeze Dark (right) — High contrast, crisp borders, and native typography.</em></p>
+
+<p align="center">
+  <img src="assets/screenshot-waveform.png" alt="Microphone test with a real 50-bar waveform" width="48%">
+</p>
+<p align="center"><em>The mic test draws the real recording envelope, not a fake animation. A flat line means a dead SCO link.</em></p>
 
 ---
 
@@ -139,10 +143,14 @@ xm music       # Switch to A2DP (hi-fi output) after a meeting
 | `xm call` | Switches headset to **HFP / mSBC** | Before joining Zoom / Teams / Meet |
 | `xm music` | Switches headset to **A2DP / LDAC** | After a call, for music and media |
 | `xm test` | Records 5s sample and rates quality | Quick mic self-check (`LIVE` / `QUIET` / `SILENT`) |
+| `xm test --json` | Same test with peak dBFS + 50-bar levels | Widgets, scripts, visualisations |
 | `xm reset` | Reconnects headset to clear stalled link | Mic shows connected but produces no audio |
-| `xm fix` | Runs `reset` followed by `call` | Pre-meeting one-shot rescue |
-| `xm status` | Displays active profile & device info | Check current audio configuration |
+| `xm reconnect` | Alias for `reset`, with up to 3 link attempts | Same as above, explicit name |
+| `xm fix` | Runs `reconnect` followed by `call` | Pre-meeting one-shot rescue |
+| `xm status` | Displays active profile, device and codec | Check current audio configuration |
 | `xm status --machine` | Outputs single token (`a2dp`/`hfp`/`off`/`none`) | Scripting, polybar, waybar, or monitoring |
+| `xm info` | Device, MAC, codec, mic, battery and config | Human-readable snapshot |
+| `xm info --json` | The same snapshot as one JSON object | Panel applets, status bars |
 | `xm doctor` | Inspects PipeWire, BlueZ & WirePlumber | Diagnostic report for troubleshooting |
 | `xm defaults-reset` | Restores WirePlumber automatic switching | Revert custom audio rules |
 
@@ -194,9 +202,10 @@ graph LR
 
 1. **Before a Meeting**: Click **Call** (or run `xm call`). The card lights up green and your mic is active.
 2. **After a Meeting**: Click **Music** (or run `xm music`). The card lights up blue and hi-fi audio (LDAC / AAC) is restored immediately.
-3. **If Audio Glitches**: Click **Fix** (or run `xm fix`). It automatically reconnects the Bluetooth link and engages Call mode in ~6 seconds.
-4. **Self-Test**: Click **Test mic** (or run `xm test`) and speak for 5 seconds to get a real-time verdict (`LIVE` / `QUIET` / `SILENT`).
-5. **Info & Safe Rollback**: Click the **ⓘ** button to view architecture details and rollback commands.
+3. **If Audio Glitches**: Click **Fix** (or run `xm fix`). It retries the Bluetooth link and engages Call mode — usually about 7 seconds when the link is healthy, up to a minute if the headset has to be woken.
+4. **Self-Test**: Click **Test** (or run `xm test`) and speak for 5 seconds. The widget switches to Call automatically, draws the recorded waveform, and reports `LIVE` / `QUIET` / `SILENT` with peak dBFS.
+5. **If the Link Is Dead**: Click **Reconnect** (or run `xm reconnect`) to reset the Bluetooth link without forcing a profile change.
+6. **Info & Safe Rollback**: Click the **ⓘ** button for the device snapshot, command reference, shortcuts, and rollback command.
 
 ---
 
