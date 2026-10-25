@@ -154,12 +154,12 @@ device_connected() {
 }
 
 wait_for_mic_source() {
-    local i=0
-    while [ "$i" -lt 8 ]; do
+    local tries="${1:-8}" delay="${2:-0.5}" i=0
+    while [ "$i" -lt "$tries" ]; do
         if [ -n "$(mic_source)" ]; then
             return 0
         fi
-        sleep 0.5
+        sleep "$delay"
         i=$((i+1))
     done
     return 1
@@ -559,8 +559,28 @@ set_profile() {
         list_card_profiles >&2
         return 1
     }
-    sleep 1
-    echo "Active profile now: $(current_profile)"
+
+    # pactl normally applies the profile synchronously, but give WirePlumber a
+    # short bounded window instead of sleeping for a full second. Polling also
+    # covers systems where the active profile appears a little later.
+    local active="" i=0
+    while [ "$i" -lt 20 ]; do
+        active=$(current_profile 2>/dev/null) || active=""
+        [ "$active" = "$prof" ] && break
+        sleep 0.05
+        i=$((i+1))
+    done
+    if [ "$active" != "$prof" ]; then
+        active=$(current_profile 2>/dev/null) || active=""
+    fi
+
+    # HFP also needs its SCO source. Wait only when it is not already there;
+    # on a healthy link this returns immediately.
+    case "$prof" in
+        headset-head-unit*) wait_for_mic_source 20 0.05 || true ;;
+    esac
+
+    echo "Active profile now: ${active:-unknown}"
 }
 
 # ------------------------------------------------------------------------------

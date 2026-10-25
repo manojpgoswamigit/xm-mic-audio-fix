@@ -655,6 +655,14 @@ PlasmoidItem {
         setMessage("Switching to " + cmd + "...")
         if (!run(cmd, cmd, false, function (out, code, exitStatus) {
             if (code === 0 && exitStatus === 0) {
+                // The command waits for the profile to be active, so update
+                // the card/tray immediately; refreshInfo only fills in the
+                // codec and battery afterwards.
+                if (cmd === "call") {
+                    headsetState = "hfp"
+                } else if (cmd === "music") {
+                    headsetState = "a2dp"
+                }
                 setMessage(okMessage)
                 root.notify("xm " + cmd, okMessage)
             } else {

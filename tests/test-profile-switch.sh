@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  Profile switch latency
+# =============================================================================
+#  `xm call` / `xm music` must return as soon as the profile is actually
+#  active. An unconditional sleep after pactl turns a ~30 ms switch into a
+#  one-second wait, which is exactly what the widget's Call/Music buttons feel.
+#
+#  Uses fake pactl/bluetoothctl binaries, so it is deterministic and does not
+#  need a headset.
+# =============================================================================
+
+set -euo pipefail
+
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/xm-switch-test.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+
+mkdir -p "$tmp/bin"
+state="$tmp/profile"
+echo "a2dp-sink" > "$state"
+
+cat > "$tmp/bin/pactl" <<'SH'
+#!/usr/bin/env bash
+state_file=${FAKE_PACTL_STATE:?}
+active=$(cat "$state_file")
+
+case "${1:-}" in
+    list)
+        case "${2:-}" in
+            cards)
+                if [ "${3:-}" = "short" ]; then
+                    printf '1\tbluez_card.80_99_E7_36_CB_CA\tbluez5\tmodule-bluez5-device\n'
+                else
+                    cat <<EOF
+Card #1
+	Name: bluez_card.80_99_E7_36_CB_CA
+	Profiles:
+		headset-head-unit: HFP
+		a2dp-sink: A2DP
+	Active Profile: $active
+EOF
+                fi
+                ;;
+            sources)
+                if [ "$active" = "headset-head-unit" ]; then
+                    printf '1\tbluez_input.80:99:E7:36:CB:CA\tPipeWire\trecord\tRUNNING\n'
+                fi
+                ;;
+        esac
+        ;;
+    set-card-profile)
+        printf '%s\n' "${3:?missing profile}" > "$state_file"
+        ;;
+esac
+SH
+
+cat > "$tmp/bin/bluetoothctl" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+
+chmod +x "$tmp/bin/pactl" "$tmp/bin/bluetoothctl"
+
+run_switch() {
+    local target=$1 start end
+    start=$(date +%s%N)
+    PATH="$tmp/bin:$PATH" FAKE_PACTL_STATE="$state" \
+        "$repo_root/xm.sh" "$target" >"$tmp/$target.out" 2>"$tmp/$target.err"
+    end=$(date +%s%N)
+    printf '%s\n' $(( (end - start) / 1000000 ))
+}
+
+call_ms=$(run_switch call)
+[ "$(cat "$state")" = "headset-head-unit" ] || {
+    echo "FAIL: call did not activate HFP" >&2
+    exit 1
+}
+
+music_ms=$(run_switch music)
+[ "$(cat "$state")" = "a2dp-sink" ] || {
+    echo "FAIL: music did not activate A2DP" >&2
+    exit 1
+}
+
+# The fake pactl is instant, so anything near a second is an artificial wait.
+limit_ms=800
+if [ "$call_ms" -gt "$limit_ms" ] || [ "$music_ms" -gt "$limit_ms" ]; then
+    echo "FAIL: profile switches too slow (call=${call_ms}ms music=${music_ms}ms, limit=${limit_ms}ms)" >&2
+    exit 1
+fi
+
+echo "PASS: call=${call_ms}ms music=${music_ms}ms"

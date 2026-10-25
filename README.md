@@ -302,16 +302,18 @@ Removes the widget, the `xm` binary, and the WirePlumber config, restoring defau
 
 ## 🧪 Development Checks
 
-The live-waveform contract has a headset-free regression test using fake
-`pactl`/`parec` binaries:
+The live-waveform and profile-switch contracts have headset-free regression
+tests using fake `pactl`/`parec` binaries:
 
 ```bash
+./tests/test-profile-switch.sh
 ./tests/test-live-waveform.sh
 ```
 
-It proves that `xm test --live-file` publishes real levels while recording and
-that the final JSON still contains 50 bars. Screenshots and the demo GIF are
-rendered from the real QML with:
+They prove that Call/Music return as soon as the profile is active and that
+`xm test --live-file` publishes real levels during recording, with the final
+JSON still containing 50 bars. Screenshots and the demo GIF are rendered from
+the real QML with:
 
 ```bash
 ./preview/render-assets.sh
@@ -323,6 +325,7 @@ rendered from the real QML with:
 
 - **Zero Audio Stack Corruption**: The widget never touches PipeWire or BlueZ APIs directly. It delegates all operations to `~/.local/bin/xm`.
 - **Single-Flight Execution**: Exactly one action runs at a time with strict timeouts. Clicking buttons repeatedly will never spawn runaway child processes.
+- **No Fixed Delays**: Call/Music wait for the profile and HFP mic source to actually become active, usually in about 50 ms, instead of padding every switch with a one-second sleep.
 - **Fail-Safe Fallbacks**: Missing Bluetooth devices, asleep headsets, or disconnected profiles degrade gracefully into clear, recoverable UI states.
 - **Privacy & Safety**: Operates entirely in user space without requiring `sudo` privileges.
 
