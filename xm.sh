@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# xm - Bluetooth XM headset meeting helper  (PipeWire / WirePlumber / BlueZ)
+# xm - Bluetooth headset meeting helper  (PipeWire / WirePlumber / BlueZ)
 # ==============================================================================
-# Fixes the classic Linux problem where Sony XM-series Bluetooth headsets
-# (WH-1000XM3/XM4/XM5, WF-1000XM3/XM4/XM5 earbuds, etc.) glitch or lose their
-# microphone the moment you join a Teams / Zoom / any WebRTC meeting.
+# Fixes the classic Linux problem where Classic Bluetooth audio headsets (Sony
+# WH-1000XM2-XM6, WF-1000XM3-XM6 earbuds, and other A2DP + HFP/HSP models) glitch
+# or lose their microphone the moment you join a Teams / Zoom / WebRTC meeting.
+#
+# The audio path is model-agnostic: every standard headset exposes the same
+# PipeWire bluez_card / headset-head-unit / a2dp-sink profiles. Model names are
+# used only for display, never to decide how to switch audio. LE Audio/LC3 BAP
+# profiles are a separate connection mode and are not part of this switch.
 #
 # WHY IT BREAKS
 #   - A2DP/LDAC (great music quality) has NO microphone channel.
@@ -69,8 +74,25 @@ find_card() {
     printf '%s\n' "$c"
 }
 
+# Print the MAC of the first audio device in `bluetoothctl devices` output.
+# Headsets, earbuds and speakers expose standard BlueZ audio UUIDs or an
+# audio-* icon; HID peripherals (mice, keyboards) do not. No model names.
+bluetooth_audio_mac() {
+    local mac info
+    while read -r _ mac _; do
+        [ -n "$mac" ] || continue
+        info=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null) || continue
+        if printf '%s\n' "$info" \
+            | grep -Eq 'UUID: (Headset|Handsfree|Audio Sink|Audio Source)|Icon: audio-'; then
+            printf '%s\n' "$mac"
+            return 0
+        fi
+    done
+    return 1
+}
+
 find_mac() {
-    local mac=""
+    local include_paired="${1:-0}" mac=""
     if have pactl; then
         mac=$(timeout 3 pactl list cards 2>/dev/null \
             | awk '/bluez_card/{f=1} f && /api.bluez5.address/ {sub(/.*= *"/,""); sub(/".*/,""); print; exit}' || true)
@@ -79,15 +101,18 @@ find_mac() {
         printf '%s\n' "$mac"
         return 0
     fi
-    # Fallback to paired Bluetooth devices if card is not yet in pactl
-    if have bluetoothctl; then
+
+    # Fallback when the card is not in pactl (headset asleep, just reconnecting,
+    # or a different Bluetooth stack). Prefer a connected audio device; only
+    # scan paired devices for explicit reconnect/status commands.
+    have bluetoothctl || return 0
+    mac=$(timeout 3 bluetoothctl devices Connected 2>/dev/null \
+        | bluetooth_audio_mac || true)
+    if [ -z "$mac" ] && [ "$include_paired" = "1" ]; then
         mac=$(timeout 3 bluetoothctl devices 2>/dev/null \
-            | awk '/(WH|WF)-[0-9]+XM|XM[0-9]|Sony/ {print $2; exit}' || true)
-        if [ -n "$mac" ]; then
-            printf '%s\n' "$mac"
-            return 0
-        fi
+            | bluetooth_audio_mac || true)
     fi
+    [ -n "$mac" ] && printf '%s\n' "$mac"
     return 0
 }
 
@@ -102,7 +127,7 @@ current_profile() {
 # Human name of the headset, from BlueZ when possible, else from the card.
 device_name() {
     local mac name card
-    mac=$(find_mac 2>/dev/null) || mac=""
+    mac=$(find_mac 1 2>/dev/null) || mac=""
     if [ -n "$mac" ] && have bluetoothctl; then
         name=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null \
             | awk -F': ' '/^[[:space:]]*Name:/{print $2; exit}' || true)
@@ -271,7 +296,7 @@ print_info_json() {
     state=$(machine_status)
     card=$(find_card 2>/dev/null) || card=""
     prof=$(current_profile 2>/dev/null) || prof=""
-    mac=$(find_mac 2>/dev/null) || mac=""
+    mac=$(find_mac 1 2>/dev/null) || mac=""
     name=$(device_name)
     codec=$(active_codec)
     mic=$(mic_source)
@@ -302,7 +327,7 @@ print_info_human() {
     state=$(machine_status)
     card=$(find_card 2>/dev/null) || card=""
     prof=$(current_profile 2>/dev/null) || prof=""
-    mac=$(find_mac 2>/dev/null) || mac=""
+    mac=$(find_mac 1 2>/dev/null) || mac=""
     name=$(device_name)
     codec=$(active_codec)
     mic=$(mic_source)
@@ -498,7 +523,7 @@ reconnect() {
     require bluetoothctl pactl
 
     local mac
-    mac=$(find_mac)
+    mac=$(find_mac 1)
     if [ -z "$mac" ]; then
         echo "Could not determine headset MAC; skipping reconnect." >&2
         return 1
@@ -536,21 +561,57 @@ profile_available() {
         $0 ~ "Name: "c {f=1}
         f && /^[ \t]*Profiles:/ {inp=1; next}
         f && /Active Profile:/ {inp=0}
-        f && inp && $0 ~ "^[ \t]*"p":" {found=1}
+        f && inp && $0 ~ "^[ \t]*"p":" {
+            if ($0 ~ /available: no/) exit 1
+            found=1
+        }
         END {exit !found}
     '
 }
 
+# Resolve a logical profile to a codec-specific variant the card actually
+# offers. This is what lets a headset with no mSBC (or no LDAC/AAC) still use
+# the same Call/Music commands: CVSD and SBC are the mandatory fallbacks.
+resolve_profile() {
+    local wanted="$1" alt
+    profile_available "$wanted" && { printf '%s\n' "$wanted"; return 0; }
+    case "$wanted" in
+        headset-head-unit)
+            for alt in headset-head-unit-msbc headset-head-unit-cvsd; do
+                profile_available "$alt" && { printf '%s\n' "$alt"; return 0; }
+            done
+            ;;
+        a2dp-sink)
+            for alt in a2dp-sink-ldac a2dp-sink-aac a2dp-sink-aptx-hd \
+                       a2dp-sink-aptx_hd a2dp-sink-aptx a2dp-sink-sbc_xq \
+                       a2dp-sink-sbc-xq a2dp-sink-sbc; do
+                profile_available "$alt" && { printf '%s\n' "$alt"; return 0; }
+            done
+            ;;
+    esac
+    return 1
+}
+
 set_profile() {
-    local card prof; card=$(find_card) || return 1; prof="$1"
+    local wanted="$1" card prof
+    card=$(find_card) || return 1
 
     # Right after a reconnect the card can appear before all its profiles do.
-    # Wait briefly instead of failing the first switch after a Fix.
+    # Wait briefly for a usable variant (preferred or mandatory fallback)
+    # instead of failing the first switch after a Fix.
     local i=0
-    while [ "$i" -lt 16 ] && ! profile_available "$prof"; do
+    while [ "$i" -lt 16 ]; do
+        prof=$(resolve_profile "$wanted" 2>/dev/null) || prof=""
+        [ -n "$prof" ] && break
         sleep 0.5
         i=$((i+1))
     done
+    if [ -z "$prof" ]; then
+        echo "Profile '$wanted' is not offered by this Bluetooth card." >&2
+        echo "Available profiles on this card:" >&2
+        list_card_profiles >&2
+        return 1
+    fi
 
     echo "Switching '$card' -> $prof ..."
     timeout 5 pactl set-card-profile "$card" "$prof" || {
@@ -624,7 +685,7 @@ run_doctor() {
     echo
     echo "Headset"
     local mac name card prof codec src conn
-    mac=$(find_mac 2>/dev/null) || mac=""
+    mac=$(find_mac 1 2>/dev/null) || mac=""
     name=$(device_name)
     card=$(find_card 2>/dev/null) || card=""
     prof=$(current_profile 2>/dev/null) || prof=""
@@ -652,6 +713,7 @@ run_doctor() {
         case "$prof" in
             headset-head-unit*) pass "mic-capable profile is active" ;;
             a2dp-sink*)         warn "music profile active - no microphone (run: $APP_NAME call)" ;;
+            bap-*)              warn "LE Audio/LC3 profile active - xm Call/Music targets Classic A2DP/HFP; use Classic Audio mode" ;;
             *)                  warn "profile '$prof' is not a known call/music profile" ;;
         esac
     fi
@@ -693,7 +755,7 @@ run_doctor() {
 # ------------------------------------------------------------------------------
 usage() {
     cat <<EOF
-$APP_NAME - Bluetooth XM headset meeting helper (Sony WH-1000XM3/XM4/XM5, WF-1000XM earbuds & similar)
+$APP_NAME - Bluetooth headset meeting helper (Sony WH-1000XM2-XM6 / WF-1000XM3-XM6 and other A2DP + HFP headsets)
 
 Usage: $APP_NAME <command> [--json]
 

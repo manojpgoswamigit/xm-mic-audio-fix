@@ -6,13 +6,13 @@
 
 **Choose your workflow: one click in your KDE Plasma panel, or one fast terminal command.**
 
-*PipeWire Bluetooth Profile Manager & Native KDE Plasma 6 Widget for Sony WH/WF-1000XM headsets*
+*PipeWire Bluetooth Profile Manager & Native KDE Plasma 6 Widget for Sony XM headsets and other standard Bluetooth headsets*
 
 <p align="center">
   <img alt="Plasma 6" src="https://img.shields.io/badge/KDE%20Plasma-6.x-3daee9?style=flat-square&logo=kde&logoColor=white">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20PipeWire-blue?style=flat-square">
   <img alt="Distros" src="https://img.shields.io/badge/tested%20on-Arch%20%7C%20CachyOS%20%7C%20Fedora%20%7C%20Ubuntu-1793d1?style=flat-square&logo=archlinux&logoColor=white">
-  <img alt="Devices" src="https://img.shields.io/badge/devices-WH%2FWF--1000XM3%20%7C%20XM4%20%7C%20XM5-6f42c1?style=flat-square">
+  <img alt="Devices" src="https://img.shields.io/badge/devices-Sony%20XM%20%7C%20any%20Bluetooth%20headset-6f42c1?style=flat-square">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green?style=flat-square">
 </p>
 
@@ -29,6 +29,7 @@
 ## 📑 Table of Contents
 
 - [The Problem & The Fix](#-the-problem--the-fix)
+- [Supported Headsets](#-supported-headsets)
 - [Choose Your Workflow](#-choose-your-workflow)
   - [Option 1: KDE Plasma 6 Widget (GUI)](#-option-1-kde-plasma-6-widget)
   - [Option 2: Terminal CLI (`xm`)](#-option-2-terminal-cli-xm)
@@ -37,6 +38,36 @@
 - [Troubleshooting & FAQ](#-troubleshooting--faq)
 - [Clean Uninstall & Safe Rollback](#-clean-uninstall--safe-rollback)
 - [Design Principles](#-design-principles)
+
+---
+
+## 🎧 Supported Headsets
+
+`xm` has no Sony-specific audio path. It finds the standard PipeWire
+`bluez_card`, switches its standard `headset-head-unit` / `a2dp-sink` profiles,
+and asks BlueZ for the device name and battery. The same code therefore covers:
+
+- **Sony WH-1000XM series**: XM2, XM3, XM4, XM5, XM6
+- **Sony WF-1000XM series**: XM3, XM4, XM5, XM6
+- **Other Sony Bluetooth headsets** (WH-CH, WH-ULT, and similar)
+- **Any other A2DP + HFP/HSP headset** managed by PipeWire and BlueZ
+
+**Verified in development:** Sony WH-1000XM5. Other models use the same
+standard Bluetooth profiles; available codecs (LDAC / AAC / aptX), mSBC support
+and battery reporting depend on the headset and its firmware. The tool controls
+one Bluetooth audio device at a time.
+
+> [!NOTE]
+> A headset that only offers HFP/CVSD or A2DP/SBC still works: `xm`
+> automatically falls back to the mandatory codec. The **Music** side still
+> needs an A2DP-capable profile.
+
+> [!IMPORTANT]
+> This workflow targets **Classic Bluetooth audio** (`a2dp-sink` /
+> `headset-head-unit`). The WH-1000XM6 and WF-1000XM6 also support **LE Audio /
+> LC3**, which uses PipeWire's BAP profiles and a different switch model. Keep
+> the headset in Classic Audio mode if you want the one-click Call/Music
+> buttons; this tool does not switch BAP/LE Audio profiles.
 
 ---
 
@@ -62,7 +93,7 @@ Bluetooth headsets have two distinct audio profiles, and only one includes a mic
 | **A2DP** | Music / Media Playback | ✅ | ❌ | Hi-Fi (LDAC / AAC / aptX) |
 | **HFP / HSP** | Voice Calls / Meetings | ✅ | ✅ | Voice-Grade (mSBC wideband) |
 
-By default, Linux **WirePlumber flips between A2DP and HFP automatically** the split-second any application peeks at your microphone. On Sony XM headsets, this flapping causes connection dropouts and can stall the Bluetooth SCO link halfway, leaving a silent microphone.
+By default, Linux **WirePlumber flips between A2DP and HFP automatically** the split-second any application peeks at your microphone. On some headsets, including Sony XM models, this flapping causes connection dropouts and can stall the Bluetooth SCO link halfway, leaving a silent microphone.
 
 ### The Fix
 
@@ -156,7 +187,7 @@ xm music       # Switch to A2DP (hi-fi output) after a meeting
 | `xm defaults-reset` | Restores WirePlumber automatic switching | Revert custom audio rules |
 
 > [!TIP]
-> **Tip for Teams/Zoom:** In your meeting app's audio settings, set both **Speaker** and **Microphone** to your Sony headset.
+> **Tip for Teams/Zoom:** In your meeting app's audio settings, set both **Speaker** and **Microphone** to your headset.
 
 ---
 
@@ -270,8 +301,14 @@ Run `xm test` in your terminal:
 #### Q: Does mic audio quality sound different during calls?
 Yes. Bluetooth specifications limit bidirectional audio (microphone + speaker simultaneously) to mono voice-grade codecs (mSBC wideband, ~16kHz). This is hardware physics, not a Linux limitation—Windows and macOS do the exact same thing. Hi-fi audio returns the instant you click **Music**.
 
-#### Q: Does this work with other headsets?
-Yes! While tailored for Sony WH-1000XM3, XM4, XM5 and WF-1000XM series, `xm` works with **any Bluetooth headset** managed by PipeWire and BlueZ.
+#### Q: Does this work with all Sony XM models and other headsets?
+Yes, for the standard **Classic Bluetooth** A2DP/HFP workflow. `xm` has no
+Sony-specific audio path: it drives the standard `bluez_card` profiles used by
+the whole XM line (**WH-1000XM2–XM6**, **WF-1000XM3–XM6**) and by other
+A2DP + HFP/HSP Bluetooth headsets. It was verified on a WH-1000XM5; codec
+availability and battery reporting vary by model and firmware. LE Audio/LC3
+mode (available on XM6 models) uses a separate BAP profile set and is not
+switched by this tool.
 
 ---
 
@@ -302,15 +339,18 @@ Removes the widget, the `xm` binary, and the WirePlumber config, restoring defau
 
 ## 🧪 Development Checks
 
-The live-waveform and profile-switch contracts have headset-free regression
-tests using fake `pactl`/`parec` binaries:
+The live-waveform, profile-switch and generic-headset contracts have
+headset-free regression tests using fake `pactl`/`parec`/`bluetoothctl` binaries:
 
 ```bash
+./tests/test-generic-headset.sh
 ./tests/test-profile-switch.sh
 ./tests/test-live-waveform.sh
 ```
 
-They prove that Call/Music return as soon as the profile is active and that
+They prove that Call/Music return as soon as the profile is active, that cards
+offering only the mandatory CVSD/SBC profiles still switch, that a non-Sony
+audio device is detected without relying on model names, and that
 `xm test --live-file` publishes real levels during recording, with the final
 JSON still containing 50 bars. Screenshots and the demo GIF are rendered from
 the real QML with:

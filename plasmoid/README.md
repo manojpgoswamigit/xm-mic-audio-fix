@@ -2,6 +2,11 @@
 
 A tiny KDE Plasma 6 applet that puts `xm` one click away, right in the panel.
 
+`xm` drives the standard PipeWire `bluez_card` A2DP/HFP profiles, so the widget
+works with Sony WH/WF-1000XM headsets and any other A2DP + HFP/HSP Bluetooth
+headset. Codec and battery details vary by model and firmware. LE Audio/LC3
+(XM6) uses a separate BAP profile set and is not switched here.
+
 ```
 [ Call ]   -> HFP/mSBC   : microphone + speaker   (before a meeting)
 [ Music ]  -> A2DP/LDAC : hi-fi output, no mic   (after a meeting)
