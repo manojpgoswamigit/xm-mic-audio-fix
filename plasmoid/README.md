@@ -78,9 +78,12 @@ While the popup is open, the widget also runs `xm info --json` (about 120 ms) to
 fill the header with the device name, codec and battery. That call is deliberately
 kept out of the 2-second panel poll, so Bluetooth is not woken unnecessarily.
 
-The mic test runs `xm test --json`, which returns the real peak level and 50
-level bars. `xm test` switches to the Call profile first if the headset is in
-Music mode, so the test cannot fail just because of the current profile.
+The mic test runs `xm test --json --live-file PATH`, which returns the real
+peak level and 50 final bars, and also writes each 100 ms level to `PATH` while
+recording. The widget polls that sidecar file to draw the waveform live, then
+replaces it with the final 50-bar result. `xm test` switches to the Call profile
+first if the headset is in Music mode, so the test cannot fail just because of
+the current profile.
 
 Keyboard shortcuts while the popup is focused: <kbd>C</kbd> Call,
 <kbd>M</kbd> Music, <kbd>T</kbd> Test, <kbd>R</kbd> Reconnect,

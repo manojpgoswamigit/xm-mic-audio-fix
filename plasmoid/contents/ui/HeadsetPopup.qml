@@ -38,6 +38,7 @@ Item {
     property string message:      ""
     property var    info:         ({})
     property var    testResult:   null
+    property var    liveLevels:   []
     property bool   showText:     true
     property bool   confirmVisible: false
     property string confirmTitle:  ""
@@ -464,6 +465,7 @@ Item {
             testing: root.testing
             countdown: root.countdown
             result: root.testResult
+            liveLevels: root.liveLevels
             profileState: root.state
             accentColor: root.stateColor
             onTestRequested: root.testRequested()

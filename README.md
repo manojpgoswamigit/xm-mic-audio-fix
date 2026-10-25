@@ -20,7 +20,7 @@
   <img src="assets/widget-demo.gif" alt="XM Headset KDE Plasma Widget Showcase" width="760">
 </p>
 
-<p><em>One-click profile switching, device/codec/battery status, a real waveform mic test, link reconnect, and full Breeze Light & Dark theme support.</em></p>
+<p><em>One-click profile switching, device/codec/battery status, a live waveform mic test, link reconnect, and full Breeze Light & Dark theme support.</em></p>
 
 </div>
 
@@ -92,7 +92,7 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
 #### ✨ Key Features
 - **Device-aware header**: headset name, live connection/profile state, active codec (`LDAC`, `AAC`, `mSBC`) and battery percentage.
 - **Tactile Profile Cards**: Large **Call** and **Music** targets with an active badge, hover feedback, and 2px accent borders.
-- **Real microphone test**: one click switches to Call if needed, records 5 seconds, and draws a **50-bar waveform from the actual samples** with `LIVE` / `QUIET` / `SILENT`, peak dBFS and duration.
+- **Live microphone test**: one click switches to Call if needed, records 5 seconds, and fills a **50-bar waveform from real 100 ms samples as you speak** with `LIVE` / `QUIET` / `SILENT`, peak dBFS and duration.
 - **Connection recovery**: **Reconnect** retries the Bluetooth link up to three times, waits for the audio card and its profiles, and verifies the link before reporting success. **Fix** = Reconnect + Call.
 - **Keyboard shortcuts**: <kbd>C</kbd> Call · <kbd>M</kbd> Music · <kbd>T</kbd> Test · <kbd>R</kbd> Reconnect · <kbd>F</kbd> Fix · <kbd>Esc</kbd> close About/confirmation.
 - **Color-Coded Panel Tray Icon**:
@@ -117,7 +117,7 @@ The widget automatically adapts its luminance, card surfaces, borders, and badge
 <p align="center">
   <img src="assets/screenshot-waveform.png" alt="Microphone test with a real 50-bar waveform" width="48%">
 </p>
-<p align="center"><em>The mic test draws the real recording envelope, not a fake animation. A flat line means a dead SCO link.</em></p>
+<p align="center"><em>The waveform moves live while you speak, then settles on the real 50-bar recording envelope. It is never a fake animation; a flat line means a dead SCO link.</em></p>
 
 ---
 
@@ -144,6 +144,7 @@ xm music       # Switch to A2DP (hi-fi output) after a meeting
 | `xm music` | Switches headset to **A2DP / LDAC** | After a call, for music and media |
 | `xm test` | Records 5s sample and rates quality | Quick mic self-check (`LIVE` / `QUIET` / `SILENT`) |
 | `xm test --json` | Same test with peak dBFS + 50-bar levels | Widgets, scripts, visualisations |
+| `xm test --json --live-file PATH` | Streams each 100 ms level to `PATH` while recording | Widget live waveform (internal) |
 | `xm reset` | Reconnects headset to clear stalled link | Mic shows connected but produces no audio |
 | `xm reconnect` | Alias for `reset`, with up to 3 link attempts | Same as above, explicit name |
 | `xm fix` | Runs `reconnect` followed by `call` | Pre-meeting one-shot rescue |
@@ -203,7 +204,7 @@ graph LR
 1. **Before a Meeting**: Click **Call** (or run `xm call`). The card lights up green and your mic is active.
 2. **After a Meeting**: Click **Music** (or run `xm music`). The card lights up blue and hi-fi audio (LDAC / AAC) is restored immediately.
 3. **If Audio Glitches**: Click **Fix** (or run `xm fix`). It retries the Bluetooth link and engages Call mode — usually about 7 seconds when the link is healthy, up to a minute if the headset has to be woken.
-4. **Self-Test**: Click **Test** (or run `xm test`) and speak for 5 seconds. The widget switches to Call automatically, draws the recorded waveform, and reports `LIVE` / `QUIET` / `SILENT` with peak dBFS.
+4. **Self-Test**: Click **Test** (or run `xm test`) and speak for 5 seconds. The widget switches to Call automatically, the waveform moves with your voice in real time, and the result reports `LIVE` / `QUIET` / `SILENT` with peak dBFS.
 5. **If the Link Is Dead**: Click **Reconnect** (or run `xm reconnect`) to reset the Bluetooth link without forcing a profile change.
 6. **Info & Safe Rollback**: Click the **ⓘ** button for the device snapshot, command reference, shortcuts, and rollback command.
 
@@ -295,6 +296,25 @@ Removes the widget, the `xm` binary, and the WirePlumber config, restoring defau
 
 # Only revert WirePlumber config
 ./uninstall-widget.sh --restore-config
+```
+
+---
+
+## 🧪 Development Checks
+
+The live-waveform contract has a headset-free regression test using fake
+`pactl`/`parec` binaries:
+
+```bash
+./tests/test-live-waveform.sh
+```
+
+It proves that `xm test --live-file` publishes real levels while recording and
+that the final JSON still contains 50 bars. Screenshots and the demo GIF are
+rendered from the real QML with:
+
+```bash
+./preview/render-assets.sh
 ```
 
 ---

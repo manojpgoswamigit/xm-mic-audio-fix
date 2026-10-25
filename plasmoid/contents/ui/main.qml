@@ -71,6 +71,12 @@ PlasmoidItem {
     readonly property string homeDir: pathFromUrl(
         Labs.StandardPaths.writableLocation(Labs.StandardPaths.HomeLocation))
 
+    readonly property string tempDir: {
+        var dir = pathFromUrl(
+            Labs.StandardPaths.writableLocation(Labs.StandardPaths.TempLocation))
+        return dir.length > 0 ? dir : "/tmp"
+    }
+
     readonly property string xmBin: configuredPath.length > 0
         ? configuredPath
         : homeDir + "/.local/bin/xm"
@@ -86,6 +92,13 @@ PlasmoidItem {
     property string message:      ""
     property var    info:         ({})
     property var    testResult:   null
+    property var    liveLevels:   []
+    property string liveLevelFile: ""
+    property bool   liveMeterBusy: false
+    property int    liveMeterSeq:  0
+    property string liveMeterSource: ""
+    property real   liveMeterRequestAt: 0
+    property int    liveLevelCount: 0
 
     property bool   confirmVisible: false
     property string confirmTitle:   ""
@@ -236,6 +249,7 @@ PlasmoidItem {
             message:       root.message
             info:          root.info
             testResult:    root.testResult
+            liveLevels:    root.liveLevels
             showText:      root.cfgShowText
             confirmVisible: root.confirmVisible
             confirmTitle:   root.confirmTitle
@@ -325,6 +339,112 @@ PlasmoidItem {
         }
     }
 
+    // A second, tiny exec source polls the sidecar file written by
+    // `xm test --live-file`. Plasma's executable data source only reports
+    // stdout when a command exits, so polling is what makes the waveform live.
+    // We read the whole (tiny) file and ingest only unseen lines, instead of
+    // tailing one line: a 120 ms timer would otherwise miss 10 Hz samples.
+    Plasma5.DataSource {
+        id: liveMeter
+        engine: "executable"
+        interval: 0
+
+        onNewData: function (sourceName, data) {
+            // Ignore a poll that belonged to a previous test.
+            if (sourceName !== root.liveMeterSource) {
+                return
+            }
+            root.liveMeterBusy = false
+            if (!root.testing || root.liveLevelFile.length === 0) {
+                return
+            }
+
+            var out = (data["stdout"] === undefined) ? "" : String(data["stdout"])
+            if (out.length === 0) {
+                return
+            }
+
+            // Ignore a final line still being written; it will be complete on
+            // the next poll.
+            if (out.charAt(out.length - 1) !== "\n") {
+                var cut = out.lastIndexOf("\n")
+                if (cut < 0) {
+                    return
+                }
+                out = out.slice(0, cut + 1)
+            }
+
+            var lines = out.split("\n").filter(function (line) {
+                return line.trim().length > 0
+            })
+            for (var i = root.liveLevelCount; i < lines.length; i++) {
+                var value = Number(lines[i])
+                if (isFinite(value)) {
+                    root.appendLiveLevel(value)
+                }
+            }
+            root.liveLevelCount = Math.max(root.liveLevelCount, lines.length)
+        }
+    }
+
+    Timer {
+        id: liveMeterTimer
+        interval: 120
+        repeat: true
+        running: root.testing && root.liveLevelFile.length > 0
+        onTriggered: {
+            if (!root.testing) {
+                return
+            }
+            var now = Date.now()
+            // Recover if a data-source callback ever goes missing.
+            if (root.liveMeterBusy && now - root.liveMeterRequestAt < 1000) {
+                return
+            }
+            root.liveMeterBusy = true
+            root.liveMeterRequestAt = now
+            root.liveMeterSeq++
+            root.liveMeterSource = "cat -- " + root.quotePath(root.liveLevelFile)
+                + " #live=" + root.liveMeterSeq
+            liveMeter.connectedSources = [root.liveMeterSource]
+        }
+    }
+
+    function appendLiveLevel(value) {
+        var v = Number(value)
+        if (!isFinite(v)) {
+            return
+        }
+        v = Math.max(0, Math.min(1, v))
+        var next = root.liveLevels.slice()
+        next.push(v)
+        while (next.length > 50) {
+            next.shift()
+        }
+        root.liveLevels = next
+    }
+
+    function startLiveMeter() {
+        root.liveLevels = []
+        root.liveLevelCount = 0
+        root.liveMeterBusy = false
+        root.liveMeterRequestAt = 0
+        root.liveMeterSeq++
+        root.liveMeterSource = ""
+        root.liveLevelFile = root.tempDir + "/xm-live-"
+            + Date.now() + "-" + Math.floor(Math.random() * 1000000) + ".txt"
+    }
+
+    function stopLiveMeter() {
+        // Clearing the path stops the timer through its running binding; do
+        // not call start()/stop() here or the binding would be destroyed.
+        liveMeter.connectedSources = []
+        root.liveMeterBusy = false
+        root.liveMeterRequestAt = 0
+        root.liveMeterSource = ""
+        root.liveLevelFile = ""
+    }
+
     Timer {
         id: actionTimeoutTimer
         interval: actionTimeoutMs
@@ -334,6 +454,7 @@ PlasmoidItem {
             if (p && p.quiet) {
                 testing = false
                 testCountdownTimer.stop()
+                stopLiveMeter()
                 setMessage("The mic test timed out. Try Reconnect, then test again.")
             } else {
                 if (headsetState === "busy") {
@@ -380,6 +501,7 @@ PlasmoidItem {
             if (wasQuiet) {
                 testing = false
                 testCountdownTimer.stop()
+                stopLiveMeter()
             } else {
                 busy = false
             }
@@ -466,6 +588,7 @@ PlasmoidItem {
             testResult = null
             testing = false
             testCountdownTimer.stop()
+            stopLiveMeter()
         }
     }
 
@@ -574,14 +697,17 @@ PlasmoidItem {
         if (testing) {
             return
         }
+        startLiveMeter()
         testing = true
         testCountdown = 5
         testCountdownTimer.restart()
         setMessage("")
 
-        if (!run("test --json", "test", false, function (out, code) {
+        if (!run("test --json --live-file " + quotePath(liveLevelFile),
+                 "test", false, function (out, code) {
             testing = false
             testCountdownTimer.stop()
+            stopLiveMeter()
 
             var r = null
             try {
@@ -610,6 +736,7 @@ PlasmoidItem {
         }, { quiet: true })) {
             testing = false
             testCountdownTimer.stop()
+            stopLiveMeter()
             setMessage("Still running the previous command.")
         }
     }

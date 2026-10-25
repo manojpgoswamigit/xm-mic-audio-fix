@@ -344,10 +344,10 @@ print_info_human() {
 #   --json: stdout is ONLY a JSON object, progress goes to stderr
 # ------------------------------------------------------------------------------
 run_mic_test() {
-    local mode="${1:-human}"
+    local mode="${1:-human}" live_file="${2:-}"
     require pactl parec python3
 
-    local prof src raw
+    local prof src
     prof=$(current_profile 2>/dev/null) || prof=""
     src=$(mic_source)
 
@@ -360,10 +360,6 @@ run_mic_test() {
         return 1
     fi
 
-    raw=$(mktemp "${TMPDIR:-/tmp}/xmmic.XXXXXX.raw")
-    # shellcheck disable=SC2064
-    trap "rm -f '$raw'" EXIT
-
     if [ "$mode" = "json" ]; then
         echo "Recording 5s from $src ..." >&2
     else
@@ -374,38 +370,98 @@ run_mic_test() {
         echo "Recording 5s from $src - TALK NOW (say a few sentences)..."
     fi
 
-    timeout 6 parec --rate=48000 --channels=1 --format=s16le -d "$src" "$raw" 2>/dev/null || true
+    python3 - "$mode" "$live_file" "$src" <<'PY'
+import array
+import json
+import math
+import os
+import select
+import subprocess
+import sys
+import time
 
-    python3 - "$raw" "$mode" <<'PY'
-import array, json, math, sys
+mode = sys.argv[1]
+live_path = sys.argv[2]
+source = sys.argv[3]
 
-path, mode = sys.argv[1], sys.argv[2]
-a = array.array("h")
-try:
-    a.frombytes(open(path, "rb").read())
-except OSError:
-    a = array.array("h")
-
-peak = max((abs(x) for x in a), default=0)
-duration = round(len(a) / 48000.0, 2)
-dbfs = round(20 * math.log10(peak / 32768.0), 1) if peak > 0 else -96.0
-
-# Exactly 50 bars, independent of how many samples parec managed to deliver.
-# Each bar is the peak of its slice, mapped from -60..0 dBFS to 0..1 so quiet
-# speech is still visible without pretending that silence is loud.
+sample_rate = 48000
 bar_count = 50
+chunk_samples = sample_rate // 10          # 100 ms per live level
+chunk_bytes = chunk_samples * 2            # s16le
+
+# Read parec directly instead of recording to a file first, so each 100 ms
+# chunk can be published to the live sidecar while the five seconds are still
+# running. One process owns the microphone; the widget only polls the file.
+# A low server-side latency is what makes parec deliver 100 ms chunks while
+# the test is running. With parec's default buffer the whole recording arrives
+# in a burst near the end, which looks like a frozen waveform.
+proc = subprocess.Popen(
+    ["parec", "--rate=48000", "--channels=1", "--format=s16le",
+     "--latency-msec=50", "-d", source],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    bufsize=0,
+)
+
+live = None
+if live_path:
+    try:
+        live = open(live_path, "w", buffering=1, encoding="utf-8")
+    except OSError:
+        # A writable sidecar is a UI convenience, never a reason to fail a test.
+        live = None
+
 levels = []
-for i in range(bar_count):
-    lo = (i * len(a)) // bar_count
-    hi = ((i + 1) * len(a)) // bar_count
-    chunk = a[lo:hi] if hi > lo else a[lo:lo + 1]
-    p = max((abs(x) for x in chunk), default=0)
-    if p > 0:
-        db = 20 * math.log10(p / 32768.0)
-        level = max(0.0, min(1.0, (db + 60.0) / 60.0))
-    else:
-        level = 0.0
-    levels.append(round(level, 3))
+peak = 0
+samples = 0
+pending = b""
+deadline = time.monotonic() + 6.0   # five seconds recorded, one second slack
+
+try:
+    fd = proc.stdout.fileno()
+    while len(levels) < bar_count and time.monotonic() < deadline:
+        remaining = deadline - time.monotonic()
+        ready, _, _ = select.select([fd], [], [], min(0.25, remaining))
+        if not ready:
+            continue
+
+        block = os.read(fd, chunk_bytes - len(pending))
+        if not block:
+            break
+        pending += block
+
+        while len(pending) >= chunk_bytes and len(levels) < bar_count:
+            raw, pending = pending[:chunk_bytes], pending[chunk_bytes:]
+            audio = array.array("h")
+            audio.frombytes(raw)
+            p = max((abs(x) for x in audio), default=0)
+            peak = max(peak, p)
+            samples += len(audio)
+
+            if p > 0:
+                db = 20 * math.log10(p / 32768.0)
+                level = max(0.0, min(1.0, (db + 60.0) / 60.0))
+            else:
+                level = 0.0
+            levels.append(round(level, 3))
+            if live is not None:
+                live.write(f"{level:.3f}\n")
+finally:
+    if live is not None:
+        live.close()
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+# The final JSON contract is always 50 bars, even if the stream stalled early.
+while len(levels) < bar_count:
+    levels.append(0.0)
+
+duration = round(samples / float(sample_rate), 2)
+dbfs = round(20 * math.log10(peak / 32768.0), 1) if peak > 0 else -96.0
 
 if peak > 800:
     verdict, label = "live", "LIVE"
@@ -425,7 +481,7 @@ if mode == "json":
         "levels": levels,
     }))
 else:
-    print(f"samples={len(a)}  peak={peak}/32767  ({dbfs:.1f} dBFS)")
+    print(f"samples={samples}  peak={peak}/32767  ({dbfs:.1f} dBFS)")
     if verdict == "live":
         print("VERDICT: LIVE - microphone is working")
     elif verdict == "quiet":
@@ -686,11 +742,31 @@ case "$cmd" in
         fi
         ;;
     test)
-        if [ "${2:-}" = "--json" ]; then
-            run_mic_test json
-        else
-            run_mic_test human
-        fi
+        # Internal options for the applet: --live-file PATH receives one real
+        # 100 ms level per line while the recording is still in progress.
+        test_mode="human"
+        test_live_file=""
+        shift
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --json) test_mode="json" ;;
+                --live-file=*) test_live_file="${1#*=}" ;;
+                --live-file)
+                    shift
+                    [ "$#" -gt 0 ] || {
+                        echo "--live-file needs a path" >&2
+                        exit 2
+                    }
+                    test_live_file="$1"
+                    ;;
+                *)
+                    echo "Unknown option for '$APP_NAME test': $1" >&2
+                    exit 2
+                    ;;
+            esac
+            shift
+        done
+        run_mic_test "$test_mode" "$test_live_file"
         ;;
     reset|reconnect)
         reconnect

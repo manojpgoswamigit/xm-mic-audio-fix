@@ -117,6 +117,7 @@ Window {
                             message:        win.previewMessage(modelData)
                             info:           win.previewInfo(modelData)
                             testResult:     win.previewTestResult(modelData)
+                            liveLevels:     win.previewLiveLevels(modelData)
                             aboutVisible:   modelData === "about"
                             showText:       true
                         }
@@ -208,6 +209,15 @@ Window {
             }
         }
         return null
+    }
+
+    // The real widget receives these at 10 Hz from `xm test --live-file`.
+    // Deterministic values keep the README screenshot reproducible.
+    function previewLiveLevels(name) {
+        if (name === "testing") {
+            return wave(1.0, 0.35)
+        }
+        return []
     }
 
     function wave(scale, noise) {

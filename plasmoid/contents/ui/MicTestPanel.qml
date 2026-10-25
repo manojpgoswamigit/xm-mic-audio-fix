@@ -3,7 +3,7 @@
 // =============================================================================
 //  Three states, one card:
 //    idle     "Microphone check" + Test button + faint placeholder bars
-//    testing  animated equalizer, countdown chip and progress bar
+//    testing  live 50-bar waveform, countdown chip and progress bar
 //    result   50-bar recording waveform + verdict chip + peak dBFS + retry
 //
 //  The waveform is real data from `xm test --json` (100 ms windows), so a
@@ -22,6 +22,7 @@ Rectangle {
     property bool   testing:        false
     property int    countdown:      5
     property var    result:         null
+    property var    liveLevels:     []
     property string profileState:   "none"   // a2dp | hfp | off | ...
     property color  accentColor:    Kirigami.Theme.highlightColor
 
@@ -82,25 +83,23 @@ Rectangle {
                                      0.05, 0.13, 0.08, 0.15, 0.06, 0.11, 0.07, 0.12,
                                      0.09, 0.18, 0.10, 0.07, 0.14, 0.08, 0.16, 0.11,
                                      0.06, 0.13, 0.09, 0.15]
-    property var liveBars: [0.15, 0.3, 0.2, 0.45, 0.25, 0.15, 0.35, 0.2,
-                            0.12, 0.28, 0.18, 0.32, 0.14, 0.24, 0.16, 0.2,
-                            0.18, 0.26, 0.15, 0.31, 0.21, 0.13, 0.23, 0.17,
-                            0.11, 0.27, 0.19, 0.22]
 
-    Timer {
-        interval: 120
-        repeat: true
-        running: panel.testing
-        onTriggered: {
-            var next = []
-            for (var i = 0; i < panel.liveBars.length; i++) {
-                next.push(0.08 + Math.random() * 0.52)
-            }
-            panel.liveBars = next
+    // Real levels arrive at 10 Hz from `xm test --live-file`. Pad on the left
+    // so a new test scrolls in from the right instead of stretching its bars.
+    readonly property var testBars: {
+        var source = panel.liveLevels || []
+        var out = []
+        var pad = Math.max(0, 50 - source.length)
+        for (var p = 0; p < pad; p++) {
+            out.push(0)
         }
+        for (var i = 0; i < source.length; i++) {
+            out.push(Number(source[i]) || 0)
+        }
+        return out.slice(Math.max(0, out.length - 50))
     }
 
-    implicitHeight: testing ? Kirigami.Units.gridUnit * 7.8
+    implicitHeight: testing ? Kirigami.Units.gridUnit * 8.2
                             : (hasResult ? Kirigami.Units.gridUnit * 8.9
                                          : Kirigami.Units.gridUnit * 6.1)
     radius: Kirigami.Units.smallSpacing * 1.8
@@ -204,10 +203,11 @@ Rectangle {
         Item {
             id: barsArea
             Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit * (panel.hasResult ? 2.3 : 1.4)
+            Layout.preferredHeight: Kirigami.Units.gridUnit
+                * (panel.testing || panel.hasResult ? 2.3 : 1.4)
             Layout.topMargin: Kirigami.Units.smallSpacing * 0.5
 
-            property var levels: panel.testing ? panel.liveBars
+            property var levels: panel.testing ? panel.testBars
                                : (panel.hasResult && !panel.hasError
                                     ? panel.result.levels : panel.idleBars)
             property int barCount: levels ? levels.length : 0
@@ -226,7 +226,8 @@ Rectangle {
                     width: barsArea.barWidth
                     radius: width / 2
                     height: Math.max(2, barsArea.height * Math.min(1.0,
-                                  (Number(modelData) || 0) * (panel.hasResult ? 1.0 : 1.8)))
+                                  (Number(modelData) || 0)
+                                  * (panel.hasResult || panel.testing ? 1.0 : 1.8)))
                     y: barsArea.height - height
                     color: panel.hasResult || panel.testing
                         ? Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
