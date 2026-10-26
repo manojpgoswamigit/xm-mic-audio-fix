@@ -3,17 +3,17 @@
     "KPlugin": {
         "Authors": [
             {
-                "Name": "manojpgoswami"
+                "Name": "Manoj Goswami"
             }
         ],
         "Category": "Multimedia",
-        "Description": "One click switch for the XM Bluetooth headset: Call (mic + speaker) or Music (hi-fi)",
+        "Description": "One-click Call/Music switching, reconnects, and a real waveform mic test for Bluetooth headsets",
         "EnabledByDefault": false,
         "Icon": "xmwidget",
         "Id": "com.manojpgoswami.xmwidget",
         "License": "MIT",
         "Name": "XM Headset",
-        "Version": "1.0",
+        "Version": "2.0",
         "Website": "https://github.com/manojpgoswamigit/xm-mic-audio-fix"
     },
     "X-Plasma-API-Minimum-Version": "6.0",

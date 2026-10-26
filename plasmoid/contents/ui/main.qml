@@ -6,8 +6,9 @@
 //      Call   -> HFP/mSBC  : microphone AND speaker work (before a meeting)
 //      Music  -> A2DP/LDAC : hi-fi output, no mic        (after a meeting)
 //
-//  plus three helpers (Test / Reset / Fix), a live profile indicator and a
-//  safe "restore audio defaults" escape hatch.
+//  plus Reconnect / Fix helpers, a live microphone self-test with a real
+//  waveform, a device/codec/battery header, and a safe "restore defaults"
+//  escape hatch.
 //
 //  DESIGN RULES
 //    * This applet never touches PipeWire / BlueZ itself. Every action is
@@ -20,6 +21,9 @@
 //    * Commands run through Plasma's own job runner, so no child process is
 //      ever owned by plasmashell and nothing is left behind when the applet
 //      is removed.
+//    * Fast polling (`status --machine`, ~15 ms) keeps the panel icon live.
+//      The richer `info --json` (~120 ms) is only fetched when the popup is
+//      open and after an action, so Bluetooth is not woken every 2 seconds.
 // =============================================================================
 
 import QtQuick
@@ -27,9 +31,7 @@ import QtQuick.Layouts
 import Qt.labs.platform as Labs
 
 import org.kde.plasma.plasmoid
-import org.kde.plasma.core as PlasmaCore
 import org.kde.kirigami as Kirigami
-import org.kde.plasma.components as PlasmaComponents3
 import org.kde.plasma.extras as PlasmaExtras
 import org.kde.plasma.plasma5support as Plasma5
 import org.kde.notification as KNotify
@@ -41,13 +43,16 @@ PlasmoidItem {
     // Configured behaviour (see contents/config/main.xml)
     // -------------------------------------------------------------------------
     readonly property string configuredPath: readCfg("xmPath", "")
-    readonly property int    cfgPollSec:     parseInt(readCfg("pollInterval", 2))
-    readonly property bool   cfgShowText:    readCfg("showText", true) === true
-                                              || readCfg("showText", true) === "true"
-    readonly property bool   cfgConfirm:     readCfg("confirmReset", true) === true
-                                              || readCfg("confirmReset", true) === "true"
-    readonly property bool   cfgNotify:      readCfg("notifications", true) === true
-                                              || readCfg("notifications", true) === "true"
+    readonly property int    cfgPollSec: {
+        var v = parseInt(readCfg("pollInterval", 2))
+        return isNaN(v) ? 2 : Math.min(30, Math.max(1, v))
+    }
+    readonly property bool   cfgShowText: readCfg("showText", true) === true
+                                          || readCfg("showText", true) === "true"
+    readonly property bool   cfgConfirm:  readCfg("confirmReset", true) === true
+                                          || readCfg("confirmReset", true) === "true"
+    readonly property bool   cfgNotify:   readCfg("notifications", true) === true
+                                          || readCfg("notifications", true) === "true"
 
     function readCfg(key, fallback) {
         if (!Plasmoid || !Plasmoid.configuration) {
@@ -58,29 +63,62 @@ PlasmoidItem {
     }
 
     // Resolved without relying on the shell expanding a leading "~": the
-    // Plasma job runner does not guarantee that. If HOME ever resolves empty
-    // the applet simply lands in its error state and the path can be set in
-    // the applet configuration.
+    // Plasma job runner does not guarantee that.
     function pathFromUrl(u) {
-        // StandardPaths returns a file:// URL in Qt6; strip the scheme.
         return String(u).replace(/^file:\/\//, "")
     }
 
     readonly property string homeDir: pathFromUrl(
         Labs.StandardPaths.writableLocation(Labs.StandardPaths.HomeLocation))
 
-    readonly property string xmBin: configuredPath.length > 0
-        ? configuredPath
-        : homeDir + "/.local/bin/xm"
+    readonly property string tempDir: {
+        var dir = pathFromUrl(
+            Labs.StandardPaths.writableLocation(Labs.StandardPaths.TempLocation))
+        return dir.length > 0 ? dir : "/tmp"
+    }
+
+    readonly property string xmBin: {
+        var p = configuredPath.length > 0
+            ? configuredPath
+            : homeDir + "/.local/bin/xm"
+        p = pathFromUrl(String(p).trim())
+        if (p.length === 0) {
+            p = homeDir + "/.local/bin/xm"
+        }
+        // The config field calls ~/.local/bin/xm home, so accept a leading
+        // tilde even when quotePath() has to quote the resulting path.
+        if (p === "~") {
+            return homeDir
+        }
+        if (p.indexOf("~/") === 0) {
+            return homeDir + p.substring(1)
+        }
+        return p
+    }
 
     // -------------------------------------------------------------------------
     // State
     // -------------------------------------------------------------------------
-    // headsetState: loading | a2dp | hfp | none | error | busy
+    // headsetState: loading | a2dp | hfp | off | none | error | busy
     property string headsetState: "loading"
     property bool   busy:         false
+    property bool   testing:      false
+    property int    testCountdown: 5
     property string message:      ""
-    property bool   aboutVisible: false
+    property var    info:         ({})
+    property var    testResult:   null
+    property var    liveLevels:   []
+    property string liveLevelFile: ""
+    property bool   liveMeterBusy: false
+    property int    liveMeterSeq:  0
+    property string liveMeterSource: ""
+    property real   liveMeterRequestAt: 0
+    property int    liveLevelCount: 0
+
+    property bool   confirmVisible: false
+    property string confirmTitle:   ""
+    property string confirmBody:    ""
+    property string confirmAction:  ""
 
     function setMessage(msg) {
         root.message = msg
@@ -95,26 +133,33 @@ PlasmoidItem {
         id: messageClearTimer
         interval: 8000
         repeat: false
-        onTriggered: {
-            root.message = ""
-        }
+        onTriggered: root.message = ""
     }
 
     // one command at a time
     property var pending: null
     property int cmdSeq:  0
 
-    readonly property int actionTimeoutMs: 30000
+    // Reconnect can spend ~55 s on three full link attempts (plus Fix's profile
+    // and mic-source waits), so the hard timeout must be generous.
+    readonly property int actionTimeoutMs: 90000
     readonly property int statusTimeoutMs: 4000
 
-    // Adaptive theme detection: text luminance > 0.5 means text is light, so background is dark.
-    readonly property bool isDark: (Kirigami.Theme.textColor.r * 0.299 + Kirigami.Theme.textColor.g * 0.587 + Kirigami.Theme.textColor.b * 0.114) > 0.5
+    readonly property bool ableToRun:    !busy && !testing
+    readonly property bool connected:    headsetState === "a2dp"
+                                      || headsetState === "hfp"
+                                      || headsetState === "off"
+    readonly property bool ableToSwitch: ableToRun && connected
 
-    // High-contrast, theme-aware semantic colors for panel and root elements
+    // Adaptive theme detection: light text means a dark theme.
+    readonly property bool isDark: (Kirigami.Theme.textColor.r * 0.299
+                                  + Kirigami.Theme.textColor.g * 0.587
+                                  + Kirigami.Theme.textColor.b * 0.114) > 0.5
+
     readonly property color colorA2dp: Kirigami.Theme.highlightColor
     readonly property color colorHfp:  isDark ? "#2cd483" : "#178a4c"
-    readonly property color colorOff:  isDark ? "#8d9296" : "#59636e"
-    readonly property color colorBusy: isDark ? "#e8a33d" : "#b25e00"
+    readonly property color colorOff:  isDark ? "#9aa0a6" : "#59636e"
+    readonly property color colorBusy: isDark ? "#e8a33d" : "#a85a00"
     readonly property color colorErr:  isDark ? "#e0553e" : "#c92a2a"
 
     readonly property color stateColor: {
@@ -129,717 +174,135 @@ PlasmoidItem {
         }
     }
 
-    readonly property string iconSource: "xmwidget"
+    // The glyph describes the connection; the colour describes the profile.
+    readonly property string compactIconSource: {
+        switch (headsetState) {
+            case "none":  return "network-bluetooth-inactive-symbolic"
+            case "error": return "dialog-warning-symbolic"
+            default:      return "audio-headset-symbolic"
+        }
+    }
 
-    readonly property bool ableToRun:    !busy
-    readonly property bool ableToSwitch: ableToRun && (headsetState === "a2dp" || headsetState === "hfp" || headsetState === "off")
+    // -------------------------------------------------------------------------
+    // Tooltip
+    // -------------------------------------------------------------------------
+    readonly property string deviceName: {
+        var n = (info || {}).device
+        return (n && String(n).length > 0) ? String(n) : "XM Headset"
+    }
+
+    readonly property string tooltipDetail: {
+        var codec = (info || {}).codec ? String(info.codec) : ""
+        var battery = (info || {}).battery
+        var extra = []
+        if (codec.length > 0) extra.push(codec)
+        if (battery !== null && battery !== undefined && !isNaN(Number(battery))) {
+            extra.push(Number(battery) + "%")
+        }
+        return extra.length > 0 ? " · " + extra.join(" · ") : ""
+    }
 
     readonly property string statusLine: {
         switch (headsetState) {
-            case "a2dp":  return "Connected - A2DP: hi-fi music, no mic"
-            case "hfp":   return "Connected - HFP: mic + speaker, voice grade"
-            case "off":   return "Connected - standby (click Call or Music)"
-            case "busy":  return "Working..."
+            case "a2dp":  return "Music profile (A2DP), no microphone"
+            case "hfp":   return "Call profile (HFP), mic + speaker ready"
+            case "off":   return "Connected, audio profile standby"
+            case "busy":  return testing ? "Testing the microphone…" : "Working…"
             case "none":  return "No Bluetooth headset found"
             case "error": return "xm could not report a profile"
-            default:      return "Checking..."
+            default:      return "Checking…"
         }
     }
 
-    readonly property string tooltipSub: {
-        switch (headsetState) {
-            case "a2dp":  return "Music profile (A2DP) - no microphone"
-            case "hfp":   return "Call profile (HFP) - mic + speaker"
-            case "off":   return "Connected - standby (click Call or Music)"
-            case "busy":  return "Working..."
-            case "none":  return "No Bluetooth headset found"
-            case "error": return "xm could not report a profile"
-            default:      return "Checking..."
-        }
-    }
-
-    readonly property string aboutText:
-        "One-click profile switching for the XM Bluetooth headset.\n\n" +
-        "Call   ->  HFP/mSBC   microphone + speaker  (before a meeting)\n" +
-        "Music  ->  A2DP/LDAC  hi-fi output, no mic  (after a meeting)\n\n" +
-        "Every button just runs the `xm` command; this applet never touches\n" +
-        "the audio stack itself.\n\n" +
-        "To take the whole thing off your system:\n" +
-        "    ~/xm-mic-audio-fix/rollback.sh\n\n" +
-        "That removes the applet, the xm command and the WirePlumber drop-in,\n" +
-        "restoring automatic A2DP/HFP switching. Nothing is left behind."
+    toolTipMainText: deviceName
+    toolTipSubText:  statusLine + tooltipDetail
 
     // -------------------------------------------------------------------------
-    // Plasmoid identity and tooltip
-    // -------------------------------------------------------------------------
-    toolTipMainText: "XM Headset"
-    toolTipSubText:  tooltipSub
-
-    // -------------------------------------------------------------------------
-    // Compact representation: one tinted icon, no text
+    // Compact representation: tinted headset + state badge
     // -------------------------------------------------------------------------
     compactRepresentation: Item {
         id: compactHolder
+        Accessible.name: root.deviceName + ". " + root.statusLine
 
         Kirigami.Icon {
             id: compactIcon
-            objectName: "compactIcon"
             anchors.centerIn: parent
-            width:  Math.min(parent.width, parent.height) * 0.85
+            width:  Math.min(parent.width, parent.height) * 0.82
             height: width
-            source: "audio-headset-symbolic"
+            source: root.compactIconSource
             color:  root.stateColor
-            opacity: root.busy ? 0.45 : 1.0
+            opacity: (root.busy || root.testing) ? 0.5 : 1.0
             Behavior on opacity { NumberAnimation { duration: 220 } }
+            Behavior on color   { ColorAnimation  { duration: 200 } }
+        }
+
+        Rectangle {
+            width:  Math.max(6, Math.min(parent.width, parent.height) * 0.22)
+            height: width
+            radius: width / 2
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.rightMargin: 1
+            anchors.bottomMargin: 1
+            color: root.stateColor
+            border.width: 1
+            border.color: Kirigami.Theme.backgroundColor
             Behavior on color { ColorAnimation { duration: 200 } }
         }
     }
 
     // -------------------------------------------------------------------------
-    // Full representation
+    // Full representation: all of the drawing lives in HeadsetPopup.qml
     // -------------------------------------------------------------------------
     fullRepresentation: PlasmaExtras.Representation {
         id: popup
 
-        Layout.minimumWidth:  Kirigami.Units.gridUnit * 19
-        Layout.preferredWidth: Kirigami.Units.gridUnit * 20
-        Layout.minimumHeight: Kirigami.Units.gridUnit * 18
-        Layout.preferredHeight: Kirigami.Units.gridUnit * 19
+        Layout.minimumWidth:  Kirigami.Units.gridUnit * 20
+        Layout.preferredWidth: Kirigami.Units.gridUnit * 22
+        Layout.minimumHeight: Kirigami.Units.gridUnit * 26
+        Layout.preferredHeight: Kirigami.Units.gridUnit * 28
 
-        // The popup draws as a "View", so children get the right palette.
         Kirigami.Theme.colorSet: Kirigami.Theme.View
 
-        // Scoped theme awareness for the popup surface
-        readonly property bool popupIsDark: (Kirigami.Theme.textColor.r * 0.299 + Kirigami.Theme.textColor.g * 0.587 + Kirigami.Theme.textColor.b * 0.114) > 0.5
-        readonly property color popupColorA2dp: Kirigami.Theme.highlightColor
-        readonly property color popupColorHfp:  popupIsDark ? "#2cd483" : "#178a4c"
-        readonly property color popupColorOff:  popupIsDark ? "#8d9296" : "#59636e"
-        readonly property color popupColorBusy: popupIsDark ? "#e8a33d" : "#b25e00"
-        readonly property color popupColorErr:  popupIsDark ? "#e0553e" : "#c92a2a"
-
-        readonly property color popupStateColor: {
-            switch (root.headsetState) {
-                case "a2dp":  return popupColorA2dp
-                case "hfp":   return popupColorHfp
-                case "off":   return popupColorBusy
-                case "busy":  return popupColorBusy
-                case "error": return popupColorErr
-                case "none":  return popupColorOff
-                default:      return popupColorOff
-            }
-        }
-
-        ColumnLayout {
+        HeadsetPopup {
             anchors.fill: parent
-            anchors.margins: Kirigami.Units.largeSpacing
-            spacing: Kirigami.Units.largeSpacing
-
-            // ---- header ----
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing * 2
-
-                Rectangle {
-                    Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth:  Kirigami.Units.iconSizes.medium
-                    Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-                    radius: width / 2
-                    color: Qt.rgba(popup.popupStateColor.r, popup.popupStateColor.g, popup.popupStateColor.b, popup.popupIsDark ? 0.18 : 0.12)
-                    border.color: Qt.rgba(popup.popupStateColor.r, popup.popupStateColor.g, popup.popupStateColor.b, popup.popupIsDark ? 0.30 : 0.25)
-                    border.width: 1
-                    Behavior on color { ColorAnimation { duration: 200 } }
-                    Behavior on border.color { ColorAnimation { duration: 200 } }
-
-                    Kirigami.Icon {
-                        anchors.centerIn: parent
-                        width:  Kirigami.Units.iconSizes.small
-                        height: Kirigami.Units.iconSizes.small
-                        source: "audio-headset-symbolic"
-                        color:  popup.popupStateColor
-                        Behavior on color { ColorAnimation { duration: 200 } }
-                    }
-                }
-
-                PlasmaComponents3.Label {
-                    Layout.fillWidth: true
-                    text: "XM Headset"
-                    font.bold: true
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
-                    elide: Text.ElideRight
-                }
-
-                PlasmaComponents3.ToolButton {
-                    objectName: "aboutButton"
-                    icon.name: "help-about-symbolic"
-                    display:  PlasmaComponents3.AbstractButton.IconOnly
-                    PlasmaComponents3.ToolTip { text: "About this applet" }
-                    onClicked: root.aboutVisible = true
-                }
-            }
-
-            // ---- status pill ----
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.8
-                visible: cfgShowText
-                radius: Kirigami.Units.smallSpacing * 1.5
-                color: Qt.rgba(popup.popupStateColor.r, popup.popupStateColor.g, popup.popupStateColor.b, popup.popupIsDark ? 0.12 : 0.08)
-                border.color: Qt.rgba(popup.popupStateColor.r, popup.popupStateColor.g, popup.popupStateColor.b, popup.popupIsDark ? 0.28 : 0.35)
-                border.width: 1
-                Behavior on color { ColorAnimation { duration: 200 } }
-                Behavior on border.color { ColorAnimation { duration: 200 } }
-
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: Kirigami.Units.largeSpacing
-                    anchors.rightMargin: Kirigami.Units.largeSpacing
-                    spacing: Kirigami.Units.smallSpacing * 2
-
-                    Rectangle {
-                        Layout.alignment: Qt.AlignVCenter
-                        width: 8
-                        height: 8
-                        radius: 4
-                        color: popup.popupStateColor
-                        Behavior on color { ColorAnimation { duration: 200 } }
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.statusLine
-                        elide: Text.ElideRight
-                        font: Kirigami.Theme.smallFont
-                    }
-                }
-            }
-
-            // ---- transient result message ----
-            Rectangle {
-                Layout.fillWidth: true
-                visible: cfgShowText && root.message.length > 0
-                Layout.preferredHeight: messageLabel.implicitHeight + Kirigami.Units.smallSpacing * 2
-                radius: Kirigami.Units.smallSpacing
-                color: Kirigami.Theme.alternateBackgroundColor
-                border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.12 : 0.15)
-                border.width: 1
-
-                PlasmaComponents3.Label {
-                    id: messageLabel
-                    anchors.fill: parent
-                    anchors.margins: Kirigami.Units.smallSpacing
-                    text: root.message
-                    wrapMode: Text.WordWrap
-                    font: Kirigami.Theme.smallFont
-                    opacity: 0.9
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
-
-            // ---- primary actions ----
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing * 2
-
-                PlasmaComponents3.Button {
-                    id: callButton
-                    objectName: "callButton"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Kirigami.Units.gridUnit * 5.2
-                    enabled: root.ableToSwitch
-                    onClicked: root.doCall()
-
-                    PlasmaComponents3.ToolTip {
-                        visible: callButton.hovered
-                        text: "xm call - switch to HFP so the mic works"
-                    }
-
-                    background: Rectangle {
-                        radius: Kirigami.Units.smallSpacing * 2
-                        color: {
-                            if (root.headsetState === "hfp") {
-                                return Qt.rgba(popup.popupColorHfp.r, popup.popupColorHfp.g, popup.popupColorHfp.b, callButton.down ? 0.25 : (popup.popupIsDark ? 0.16 : 0.12))
-                            }
-                            if (callButton.hovered) {
-                                return Kirigami.Theme.hoverColor
-                            }
-                            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.05 : 0.04)
-                        }
-                        border.color: {
-                            if (root.headsetState === "hfp") {
-                                return popup.popupColorHfp
-                            }
-                            if (callButton.hovered) {
-                                return Kirigami.Theme.focusColor
-                            }
-                            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.12 : 0.14)
-                        }
-                        border.width: (root.headsetState === "hfp") ? 2 : 1
-                        opacity: callButton.enabled ? 1.0 : 0.4
-                        Behavior on color { ColorAnimation { duration: 150 } }
-                        Behavior on border.color { ColorAnimation { duration: 150 } }
-                    }
-
-                    contentItem: ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Kirigami.Icon {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth:  Kirigami.Units.iconSizes.medium
-                            Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-                            source: "audio-headset-symbolic"
-                            color: (root.headsetState === "hfp") ? popup.popupColorHfp : (callButton.enabled ? Kirigami.Theme.textColor : popup.popupColorOff)
-                        }
-
-                        PlasmaComponents3.Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "Call"
-                            font.bold: true
-                            color: (root.headsetState === "hfp") ? popup.popupColorHfp : Kirigami.Theme.textColor
-                        }
-
-                        PlasmaComponents3.Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "mic + speaker"
-                            font: Kirigami.Theme.smallFont
-                            opacity: (root.headsetState === "hfp") ? 0.9 : 0.65
-                            color: Kirigami.Theme.textColor
-                        }
-                    }
-                }
-
-                PlasmaComponents3.Button {
-                    id: musicButton
-                    objectName: "musicButton"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: Kirigami.Units.gridUnit * 5.2
-                    enabled: root.ableToSwitch
-                    onClicked: root.doMusic()
-
-                    PlasmaComponents3.ToolTip {
-                        visible: musicButton.hovered
-                        text: "xm music - switch back to hi-fi A2DP"
-                    }
-
-                    background: Rectangle {
-                        radius: Kirigami.Units.smallSpacing * 2
-                        color: {
-                            if (root.headsetState === "a2dp") {
-                                return Qt.rgba(popup.popupColorA2dp.r, popup.popupColorA2dp.g, popup.popupColorA2dp.b, musicButton.down ? 0.25 : (popup.popupIsDark ? 0.16 : 0.12))
-                            }
-                            if (musicButton.hovered) {
-                                return Kirigami.Theme.hoverColor
-                            }
-                            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.05 : 0.04)
-                        }
-                        border.color: {
-                            if (root.headsetState === "a2dp") {
-                                return popup.popupColorA2dp
-                            }
-                            if (musicButton.hovered) {
-                                return Kirigami.Theme.focusColor
-                            }
-                            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.12 : 0.14)
-                        }
-                        border.width: (root.headsetState === "a2dp") ? 2 : 1
-                        opacity: musicButton.enabled ? 1.0 : 0.4
-                        Behavior on color { ColorAnimation { duration: 150 } }
-                        Behavior on border.color { ColorAnimation { duration: 150 } }
-                    }
-
-                    contentItem: ColumnLayout {
-                        anchors.centerIn: parent
-                        spacing: Kirigami.Units.smallSpacing
-
-                        Kirigami.Icon {
-                            Layout.alignment: Qt.AlignHCenter
-                            Layout.preferredWidth:  Kirigami.Units.iconSizes.medium
-                            Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-                            source: "audio-speakers-symbolic"
-                            color: (root.headsetState === "a2dp") ? popup.popupColorA2dp : (musicButton.enabled ? Kirigami.Theme.textColor : popup.popupColorOff)
-                        }
-
-                        PlasmaComponents3.Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "Music"
-                            font.bold: true
-                            color: (root.headsetState === "a2dp") ? popup.popupColorA2dp : Kirigami.Theme.textColor
-                        }
-
-                        PlasmaComponents3.Label {
-                            Layout.alignment: Qt.AlignHCenter
-                            text: "hi-fi, no mic"
-                            font: Kirigami.Theme.smallFont
-                            opacity: (root.headsetState === "a2dp") ? 0.9 : 0.65
-                            color: Kirigami.Theme.textColor
-                        }
-                    }
-                }
-            }
-
-            // ---- helpers ----
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing * 1.5
-
-                PlasmaComponents3.Button {
-                    id: testButton
-                    objectName: "testButton"
-                    Layout.fillWidth: true
-                    text: "Test mic"
-                    icon.name: "audio-input-microphone-symbolic"
-                    enabled: root.ableToRun
-                    onClicked: root.doTest()
-                }
-
-                PlasmaComponents3.Button {
-                    id: resetButton
-                    objectName: "resetButton"
-                    Layout.fillWidth: true
-                    text: "Reset link"
-                    icon.name: "view-refresh-symbolic"
-                    enabled: root.ableToRun
-                    onClicked: root.doReset()
-                }
-
-                PlasmaComponents3.Button {
-                    id: fixButton
-                    objectName: "fixButton"
-                    Layout.fillWidth: true
-                    text: "Fix"
-                    icon.name: "tools-symbolic"
-                    enabled: root.ableToRun
-                    onClicked: root.doFix()
-                }
-            }
-
-            PlasmaComponents3.BusyIndicator {
-                Layout.alignment: Qt.AlignHCenter
-                visible: root.busy
-                running: root.busy
-                Layout.preferredHeight: root.busy ? Kirigami.Units.gridUnit * 1.5 : 0
-            }
-
-            Item { Layout.fillHeight: true }
-
-            Kirigami.Separator {
-                Layout.fillWidth: true
-                opacity: 0.45
-            }
-
-            // ---- footer ----
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing * 2
-
-                PlasmaComponents3.ToolButton {
-                    id: defaultsButton
-                    objectName: "defaultsButton"
-                    text: "Restore audio defaults"
-                    icon.name: "edit-undo-symbolic"
-                    display: PlasmaComponents3.AbstractButton.TextBesideIcon
-                    enabled: root.ableToRun
-                    onClicked: root.doRestoreDefaults()
-                }
-
-                Item { Layout.fillWidth: true }
-
-                PlasmaComponents3.Label {
-                    text: "via xm"
-                    opacity: 0.5
-                    font: Kirigami.Theme.smallFont
-                }
-            }
-        }
-
-        // ---- overlay: About and confirmations ----
-        Rectangle {
-            id: overlay
-            anchors.fill: parent
-            visible: root.aboutVisible || root.confirmVisible
-            color: Kirigami.Theme.backgroundColor
-            border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.16 : 0.20)
-            border.width: 1
-            radius: Kirigami.Units.smallSpacing * 1.5
-            clip: true
-            z: 99
-
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: Kirigami.Units.largeSpacing
-                spacing: Kirigami.Units.smallSpacing * 1.5
-
-                // ---- modal header ----
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing * 2
-
-                    Rectangle {
-                        Layout.alignment: Qt.AlignVCenter
-                        Layout.preferredWidth:  Kirigami.Units.iconSizes.medium
-                        Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-                        radius: width / 2
-                        color: Qt.rgba(
-                            (root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy).r,
-                            (root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy).g,
-                            (root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy).b,
-                            popup.popupIsDark ? 0.18 : 0.12)
-                        border.color: Qt.rgba(
-                            (root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy).r,
-                            (root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy).g,
-                            (root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy).b,
-                            popup.popupIsDark ? 0.30 : 0.25)
-                        border.width: 1
-
-                        Kirigami.Icon {
-                            anchors.centerIn: parent
-                            width:  Kirigami.Units.iconSizes.small
-                            height: Kirigami.Units.iconSizes.small
-                            source: root.aboutVisible ? "audio-headset-symbolic" : "dialog-warning-symbolic"
-                            color:  root.aboutVisible ? popup.popupColorA2dp : popup.popupColorBusy
-                        }
-                    }
-
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 1
-
-                        PlasmaComponents3.Label {
-                            Layout.fillWidth: true
-                            font.bold: true
-                            font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
-                            text: root.aboutVisible ? "About XM Headset" : root.confirmTitle
-                            elide: Text.ElideRight
-                        }
-
-                        PlasmaComponents3.Label {
-                            Layout.fillWidth: true
-                            text: root.aboutVisible ? "Profile Manager for PipeWire" : "Action confirmation"
-                            font: Kirigami.Theme.smallFont
-                            opacity: 0.6
-                            elide: Text.ElideRight
-                        }
-                    }
-
-                    PlasmaComponents3.ToolButton {
-                        icon.name: "dialog-close-symbolic"
-                        display:  PlasmaComponents3.AbstractButton.IconOnly
-                        PlasmaComponents3.ToolTip { text: "Close" }
-                        onClicked: {
-                            if (root.aboutVisible) {
-                                root.aboutVisible = false
-                            } else {
-                                root.cancelConfirm()
-                            }
-                        }
-                    }
-                }
-
-                Kirigami.Separator {
-                    Layout.fillWidth: true
-                    opacity: 0.35
-                }
-
-                // ---- scrollable content ----
-                PlasmaComponents3.ScrollView {
-                    id: overlayScroll
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    clip: true
-                    PlasmaComponents3.ScrollBar.horizontal.policy: PlasmaComponents3.ScrollBar.AlwaysOff
-
-                    ColumnLayout {
-                        width: overlayScroll.availableWidth
-                        spacing: Kirigami.Units.smallSpacing * 1.5
-
-                        // About View
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: root.aboutVisible
-                            spacing: Kirigami.Units.smallSpacing * 1.5
-
-                            PlasmaComponents3.Label {
-                                Layout.fillWidth: true
-                                text: "One-click profile switcher for Sony WH-1000XM headsets under PipeWire."
-                                wrapMode: Text.WordWrap
-                                opacity: 0.9
-                            }
-
-                            // Call mini-card
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: aboutCallRow.implicitHeight + Kirigami.Units.smallSpacing * 2
-                                radius: Kirigami.Units.smallSpacing
-                                color: Qt.rgba(popup.popupColorHfp.r, popup.popupColorHfp.g, popup.popupColorHfp.b, popup.popupIsDark ? 0.12 : 0.08)
-                                border.color: Qt.rgba(popup.popupColorHfp.r, popup.popupColorHfp.g, popup.popupColorHfp.b, 0.3)
-                                border.width: 1
-
-                                RowLayout {
-                                    id: aboutCallRow
-                                    anchors.fill: parent
-                                    anchors.leftMargin: Kirigami.Units.smallSpacing * 1.5
-                                    anchors.rightMargin: Kirigami.Units.smallSpacing * 1.5
-                                    spacing: Kirigami.Units.smallSpacing * 1.5
-
-                                    Kirigami.Icon {
-                                        source: "audio-headset-symbolic"
-                                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                                        color: popup.popupColorHfp
-                                    }
-
-                                    PlasmaComponents3.Label {
-                                        text: "Call"
-                                        font.bold: true
-                                        color: popup.popupColorHfp
-                                    }
-
-                                    PlasmaComponents3.Label {
-                                        Layout.fillWidth: true
-                                        text: "HFP / mSBC: mic + speaker for meetings"
-                                        elide: Text.ElideRight
-                                        font: Kirigami.Theme.smallFont
-                                    }
-                                }
-                            }
-
-                            // Music mini-card
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: aboutMusicRow.implicitHeight + Kirigami.Units.smallSpacing * 2
-                                radius: Kirigami.Units.smallSpacing
-                                color: Qt.rgba(popup.popupColorA2dp.r, popup.popupColorA2dp.g, popup.popupColorA2dp.b, popup.popupIsDark ? 0.12 : 0.08)
-                                border.color: Qt.rgba(popup.popupColorA2dp.r, popup.popupColorA2dp.g, popup.popupColorA2dp.b, 0.3)
-                                border.width: 1
-
-                                RowLayout {
-                                    id: aboutMusicRow
-                                    anchors.fill: parent
-                                    anchors.leftMargin: Kirigami.Units.smallSpacing * 1.5
-                                    anchors.rightMargin: Kirigami.Units.smallSpacing * 1.5
-                                    spacing: Kirigami.Units.smallSpacing * 1.5
-
-                                    Kirigami.Icon {
-                                        source: "audio-speakers-symbolic"
-                                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
-                                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                                        color: popup.popupColorA2dp
-                                    }
-
-                                    PlasmaComponents3.Label {
-                                        text: "Music"
-                                        font.bold: true
-                                        color: popup.popupColorA2dp
-                                    }
-
-                                    PlasmaComponents3.Label {
-                                        Layout.fillWidth: true
-                                        text: "A2DP / LDAC: hi-fi output, no mic"
-                                        elide: Text.ElideRight
-                                        font: Kirigami.Theme.smallFont
-                                    }
-                                }
-                            }
-
-                            // Rollback note
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: rollbackBox.implicitHeight + Kirigami.Units.smallSpacing * 2
-                                radius: Kirigami.Units.smallSpacing
-                                color: Kirigami.Theme.alternateBackgroundColor
-                                border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, popup.popupIsDark ? 0.12 : 0.15)
-                                border.width: 1
-
-                                ColumnLayout {
-                                    id: rollbackBox
-                                    anchors.fill: parent
-                                    anchors.margins: Kirigami.Units.smallSpacing
-                                    spacing: 2
-
-                                    PlasmaComponents3.Label {
-                                        text: "To restore defaults or uninstall:"
-                                        font: Kirigami.Theme.smallFont
-                                        opacity: 0.7
-                                    }
-
-                                    PlasmaComponents3.Label {
-                                        text: "~/xm-mic-audio-fix/rollback.sh"
-                                        font.bold: true
-                                        font.pointSize: Kirigami.Theme.smallFont.pointSize
-                                    }
-                                }
-                            }
-                        }
-
-                        // Confirmation View
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            visible: root.confirmVisible
-                            spacing: Kirigami.Units.smallSpacing * 1.5
-
-                            PlasmaComponents3.Label {
-                                Layout.fillWidth: true
-                                text: root.confirmBody
-                                wrapMode: Text.WordWrap
-                                opacity: 0.9
-                            }
-                        }
-                    }
-                }
-
-                Kirigami.Separator {
-                    Layout.fillWidth: true
-                    opacity: 0.35
-                }
-
-                // ---- footer buttons ----
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing * 2
-
-                    Item { Layout.fillWidth: true }
-
-                    PlasmaComponents3.Button {
-                        visible: !root.aboutVisible
-                        text: "Cancel"
-                        onClicked: root.cancelConfirm()
-                    }
-
-                    PlasmaComponents3.Button {
-                        text: root.aboutVisible ? "Done" : "Do it"
-                        font.bold: true
-                        onClicked: {
-                            if (root.aboutVisible) {
-                                root.aboutVisible = false
-                            } else {
-                                root.acceptConfirm()
-                            }
-                        }
-                    }
-                }
-            }
+            state:         root.headsetState
+            busy:          root.busy
+            testing:       root.testing
+            countdown:     root.testCountdown
+            message:       root.message
+            info:          root.info
+            testResult:    root.testResult
+            liveLevels:    root.liveLevels
+            showText:      root.cfgShowText
+            confirmVisible: root.confirmVisible
+            confirmTitle:   root.confirmTitle
+            confirmBody:    root.confirmBody
+
+            onCallRequested:      root.doCall()
+            onMusicRequested:     root.doMusic()
+            onTestRequested:      root.doTest()
+            onReconnectRequested: root.doReset()
+            onFixRequested:       root.doFix()
+            onRestoreRequested:   root.doRestoreDefaults()
+            onConfirmAccepted:    root.acceptConfirm()
+            onConfirmCancelled:   root.cancelConfirm()
         }
     }
 
     // -------------------------------------------------------------------------
-    // Confirmation state (an overlay inside the popup, never a blocking dialog)
+    // Confirmation helpers (an overlay inside the popup, never a blocking dialog)
     // -------------------------------------------------------------------------
-    property bool   confirmVisible: false
-    property string confirmTitle:   ""
-    property string confirmBody:    ""
-    property string confirmAction:  ""
-
     function askConfirm(action, title, body) {
-        confirmAction = action
-        confirmTitle  = title
-        confirmBody   = body
+        confirmAction  = action
+        confirmTitle   = title
+        confirmBody    = body
         confirmVisible = true
     }
 
     function cancelConfirm() {
         var hadConfirm = confirmVisible && confirmTitle.length > 0
         confirmVisible = false
-        aboutVisible   = false
         confirmAction  = ""
         if (hadConfirm) {
             setMessage("Cancelled.")
@@ -849,7 +312,6 @@ PlasmoidItem {
     function acceptConfirm() {
         var action = confirmAction
         confirmVisible = false
-        aboutVisible   = false
         confirmAction  = ""
         if (action === "reset-defaults") {
             runResetDefaults()
@@ -877,12 +339,18 @@ PlasmoidItem {
 
             var done = p.onDone
             var isBg = p.isBackground
+            var quiet = p.quiet
             pending = null
             if (!isBg) {
-                busy = false
                 actionTimeoutTimer.stop()
-                if (headsetState === "busy") {
-                    headsetState = "loading"
+                if (quiet) {
+                    testing = false
+                    testCountdownTimer.stop()
+                } else {
+                    busy = false
+                    if (headsetState === "busy") {
+                        headsetState = "loading"
+                    }
                 }
             } else {
                 statusTimeoutTimer.stop()
@@ -895,20 +363,133 @@ PlasmoidItem {
         }
     }
 
+    // A second, tiny exec source polls the sidecar file written by
+    // `xm test --live-file`. Plasma's executable data source only reports
+    // stdout when a command exits, so polling is what makes the waveform live.
+    // We read the whole (tiny) file and ingest only unseen lines, instead of
+    // tailing one line: a 120 ms timer would otherwise miss 10 Hz samples.
+    Plasma5.DataSource {
+        id: liveMeter
+        engine: "executable"
+        interval: 0
+
+        onNewData: function (sourceName, data) {
+            // Ignore a poll that belonged to a previous test.
+            if (sourceName !== root.liveMeterSource) {
+                return
+            }
+            root.liveMeterBusy = false
+            if (!root.testing || root.liveLevelFile.length === 0) {
+                return
+            }
+
+            var out = (data["stdout"] === undefined) ? "" : String(data["stdout"])
+            if (out.length === 0) {
+                return
+            }
+
+            // Ignore a final line still being written; it will be complete on
+            // the next poll.
+            if (out.charAt(out.length - 1) !== "\n") {
+                var cut = out.lastIndexOf("\n")
+                if (cut < 0) {
+                    return
+                }
+                out = out.slice(0, cut + 1)
+            }
+
+            var lines = out.split("\n").filter(function (line) {
+                return line.trim().length > 0
+            })
+            for (var i = root.liveLevelCount; i < lines.length; i++) {
+                var value = Number(lines[i])
+                if (isFinite(value)) {
+                    root.appendLiveLevel(value)
+                }
+            }
+            root.liveLevelCount = Math.max(root.liveLevelCount, lines.length)
+        }
+    }
+
+    Timer {
+        id: liveMeterTimer
+        interval: 120
+        repeat: true
+        running: root.testing && root.liveLevelFile.length > 0
+        onTriggered: {
+            if (!root.testing) {
+                return
+            }
+            var now = Date.now()
+            // Recover if a data-source callback ever goes missing.
+            if (root.liveMeterBusy && now - root.liveMeterRequestAt < 1000) {
+                return
+            }
+            root.liveMeterBusy = true
+            root.liveMeterRequestAt = now
+            root.liveMeterSeq++
+            root.liveMeterSource = "cat -- " + root.quotePath(root.liveLevelFile)
+                + " #live=" + root.liveMeterSeq
+            liveMeter.connectedSources = [root.liveMeterSource]
+        }
+    }
+
+    function appendLiveLevel(value) {
+        var v = Number(value)
+        if (!isFinite(v)) {
+            return
+        }
+        v = Math.max(0, Math.min(1, v))
+        var next = root.liveLevels.slice()
+        next.push(v)
+        while (next.length > 50) {
+            next.shift()
+        }
+        root.liveLevels = next
+    }
+
+    function startLiveMeter() {
+        root.liveLevels = []
+        root.liveLevelCount = 0
+        root.liveMeterBusy = false
+        root.liveMeterRequestAt = 0
+        root.liveMeterSeq++
+        root.liveMeterSource = ""
+        root.liveLevelFile = root.tempDir + "/xm-live-"
+            + Date.now() + "-" + Math.floor(Math.random() * 1000000) + ".txt"
+    }
+
+    function stopLiveMeter() {
+        // Clearing the path stops the timer through its running binding; do
+        // not call start()/stop() here or the binding would be destroyed.
+        liveMeter.connectedSources = []
+        root.liveMeterBusy = false
+        root.liveMeterRequestAt = 0
+        root.liveMeterSource = ""
+        root.liveLevelFile = ""
+    }
+
     Timer {
         id: actionTimeoutTimer
         interval: actionTimeoutMs
         onTriggered: {
             var p = pending
             cancelPending()
-            if (headsetState === "busy") {
-                headsetState = "loading"
+            if (p && p.quiet) {
+                testing = false
+                testCountdownTimer.stop()
+                stopLiveMeter()
+                setMessage("The mic test timed out. Try Reconnect, then test again.")
+            } else {
+                if (headsetState === "busy") {
+                    headsetState = "loading"
+                }
+                setMessage("That command timed out. The headset may be asleep.")
+                if (p && p.label && p.label.length > 0) {
+                    root.notify("xm " + p.label + " timed out", root.message)
+                }
             }
-            setMessage("That command timed out. The headset may be asleep.")
-            if (p && p.label && p.label.length > 0) {
-                root.notify("xm " + p.label + " timed out", root.message)
-            }
-            root.refreshStatus()
+            root.refreshInfo()
         }
     }
 
@@ -918,16 +499,36 @@ PlasmoidItem {
         onTriggered: {
             if (pending && pending.isBackground) {
                 cancelPending()
-                headsetState = "error"
+                if (!root.busy && !root.testing) {
+                    headsetState = "error"
+                }
+            }
+        }
+    }
+
+    Timer {
+        id: testCountdownTimer
+        interval: 1000
+        repeat: true
+        onTriggered: {
+            if (root.testCountdown > 0) {
+                root.testCountdown = root.testCountdown - 1
             }
         }
     }
 
     function cancelPending() {
         if (pending !== null) {
+            var wasQuiet = pending.quiet
             runner.connectedSources = []
             pending = null
-            busy = false
+            if (wasQuiet) {
+                testing = false
+                testCountdownTimer.stop()
+                stopLiveMeter()
+            } else {
+                busy = false
+            }
             actionTimeoutTimer.stop()
             statusTimeoutTimer.stop()
         }
@@ -942,26 +543,30 @@ PlasmoidItem {
 
     /**
      * Run "<xmBin> <argv>" with single flight and a hard timeout.
+     * opts.quiet runs without flipping the whole popup into busy state (used by
+     * the mic test, which draws its own listening state).
      * Returns true when the command was started, false when one is already
      * running. `onDone(out, code, exitStatus, stderr)` runs at most once.
      */
-    function run(argv, label, isBackground, onDone) {
+    function run(argv, label, isBackground, onDone, opts) {
+        opts = opts || {}
         if (pending !== null) {
             if (pending.isBackground) {
-                // Cancel background status poll in favor of user action or new request
                 cancelPending()
             } else {
-                // User action already in flight
                 return false
             }
         }
         cmdSeq++
         var src = quotePath(xmBin) + " " + argv + " #seq=" + cmdSeq
-        pending = { src: src, onDone: onDone, label: label, isBackground: !!isBackground }
+        pending = { src: src, onDone: onDone, label: label,
+                    isBackground: !!isBackground, quiet: !!opts.quiet }
 
         if (!isBackground) {
-            busy = true
-            headsetState = "busy"
+            if (!opts.quiet) {
+                busy = true
+                headsetState = "busy"
+            }
             actionTimeoutTimer.restart()
         } else {
             statusTimeoutTimer.restart()
@@ -977,6 +582,8 @@ PlasmoidItem {
 
     // -------------------------------------------------------------------------
     // Status polling
+    //   fast:  status --machine every pollMs, keeps the panel icon current
+    //   rich:  info --json only while the popup is open and after an action
     // -------------------------------------------------------------------------
     Timer {
         id: pollTimer
@@ -986,10 +593,31 @@ PlasmoidItem {
         onTriggered: root.refreshStatus()
     }
 
+    Timer {
+        id: infoRefreshTimer
+        interval: 12000
+        repeat: true
+        running: root.expanded
+        onTriggered: root.refreshInfo()
+    }
+
     readonly property int pollMs: Math.max(1, cfgPollSec) * 1000
 
+    onExpandedChanged: {
+        if (root.expanded) {
+            refreshStatus()
+            refreshInfo()
+        } else {
+            // A verdict from a previous meeting is not useful next week.
+            testResult = null
+            testing = false
+            testCountdownTimer.stop()
+            stopLiveMeter()
+        }
+    }
+
     function refreshStatus() {
-        if (busy) {
+        if (busy || testing) {
             return
         }
         run("status --machine", "status", true, function (out, code) {
@@ -997,7 +625,11 @@ PlasmoidItem {
             if (code === 0 && (token === "a2dp" || token === "hfp" ||
                                token === "off"  || token === "none" || token === "error")) {
                 headsetState = token
-                if ((token === "a2dp" || token === "hfp" || token === "off") && root.message.indexOf("timed out") >= 0) {
+                if (token !== "hfp") {
+                    testResult = null
+                }
+                if ((token === "a2dp" || token === "hfp" || token === "off")
+                        && root.message.indexOf("timed out") >= 0) {
                     root.message = ""
                 }
             } else {
@@ -1006,11 +638,39 @@ PlasmoidItem {
         })
     }
 
+    function refreshInfo() {
+        if (busy || testing) {
+            return
+        }
+        run("info --json", "info", true, function (out, code) {
+            if (code !== 0) {
+                return
+            }
+            try {
+                var o = JSON.parse(trimEnd(out))
+                if (o && typeof o === "object") {
+                    root.info = o
+                    if (o.state === "a2dp" || o.state === "hfp" || o.state === "off"
+                            || o.state === "none" || o.state === "error") {
+                        root.headsetState = o.state
+                    }
+                }
+            } catch (e) {
+                // Keep the last known good snapshot: a parse error must never
+                // blank out a working header.
+            }
+        })
+    }
+
     // -------------------------------------------------------------------------
     // Actions
     // -------------------------------------------------------------------------
     function doCall()  { switchProfile("call",  "Call profile on: mic + speaker both work.") }
-    function doMusic() { switchProfile("music", "Music profile on: hi-fi, no mic.") }
+    function doMusic() {
+        // A mic verdict belongs to the call profile; never show it in music mode.
+        testResult = null
+        switchProfile("music", "Music profile on: hi-fi, no mic.")
+    }
 
     function switchProfile(cmd, okMessage) {
         if (!ableToSwitch) {
@@ -1019,36 +679,96 @@ PlasmoidItem {
         setMessage("Switching to " + cmd + "...")
         if (!run(cmd, cmd, false, function (out, code, exitStatus) {
             if (code === 0 && exitStatus === 0) {
+                // The command waits for the profile to be active, so update
+                // the card/tray immediately; refreshInfo only fills in the
+                // codec and battery afterwards.
+                if (cmd === "call") {
+                    headsetState = "hfp"
+                } else if (cmd === "music") {
+                    headsetState = "a2dp"
+                }
                 setMessage(okMessage)
                 root.notify("xm " + cmd, okMessage)
             } else {
                 setMessage("xm " + cmd + " failed (exit " + code + ").")
                 root.notify("xm " + cmd + " failed", root.message)
             }
-            root.refreshStatus()
+            root.refreshInfo()
         })) {
             setMessage("Still running the previous command.")
         }
     }
 
     function doTest() {
-        if (!ableToRun) {
+        if (!connected || !ableToRun) {
             return
         }
-        setMessage("Testing the mic - speak now (5 seconds)...")
-        if (!run("test", "test", false, function (out, code) {
-            var verdict = "Mic test finished."
-            var lines = trimEnd(out).split("\n")
-            for (var i = lines.length - 1; i >= 0; i--) {
-                if (lines[i].indexOf("VERDICT:") === 0) {
-                    verdict = lines[i].replace("VERDICT: ", "")
-                    break
+        testResult = null
+
+        // A2DP has no microphone at all. Switch first, then record, so a test
+        // can never fail just because the headset was left in music mode.
+        if (headsetState !== "hfp") {
+            setMessage("Switching to Call for the mic test...")
+            if (!run("call", "call", false, function (out, code, exitStatus) {
+                if (code === 0 && exitStatus === 0) {
+                    setMessage("")
+                    startMicTest()
+                } else {
+                    setMessage("Could not switch to Call. Try Reconnect, then test again.")
+                    root.refreshInfo()
                 }
+            })) {
+                setMessage("Still running the previous command.")
             }
-            setMessage(verdict)
-            root.notify("xm test", verdict)
-            root.refreshStatus()
-        })) {
+            return
+        }
+        startMicTest()
+    }
+
+    function startMicTest() {
+        if (testing) {
+            return
+        }
+        startLiveMeter()
+        testing = true
+        testCountdown = 5
+        testCountdownTimer.restart()
+        setMessage("")
+
+        if (!run("test --json --live-file " + quotePath(liveLevelFile),
+                 "test", false, function (out, code) {
+            testing = false
+            testCountdownTimer.stop()
+            stopLiveMeter()
+
+            var r = null
+            try {
+                r = JSON.parse(trimEnd(out))
+            } catch (e) {
+                r = null
+            }
+            if (!r || typeof r !== "object") {
+                r = { ok: false, verdict: "error", label: "ERROR",
+                      message: "xm test returned an unexpected result", levels: [] }
+            }
+            root.testResult = r
+
+            var notifyText
+            if (r.ok === false) {
+                notifyText = "No microphone available - try Reconnect."
+            } else if (r.verdict === "live") {
+                notifyText = "LIVE - microphone is working (" + Number(r.peak_dbfs).toFixed(1) + " dBFS)"
+            } else if (r.verdict === "quiet") {
+                notifyText = "QUIET - move closer or raise the headset mic volume"
+            } else {
+                notifyText = "SILENT - try Reconnect, then test again"
+            }
+            root.notify("xm test", notifyText)
+            root.refreshInfo()
+        }, { quiet: true })) {
+            testing = false
+            testCountdownTimer.stop()
+            stopLiveMeter()
             setMessage("Still running the previous command.")
         }
     }
@@ -1057,13 +777,14 @@ PlasmoidItem {
         if (!ableToRun) {
             return
         }
-        setMessage("Resetting the headset link (about 6 seconds)...")
-        if (!run("reset", "reset", false, function (out, code) {
+        testResult = null
+        setMessage("Reconnecting the headset (up to ~60 seconds)...")
+        if (!run("reconnect", "reconnect", false, function (out, code) {
             var msg = (code === 0) ? "Headset link reset."
-                                   : "xm reset failed (exit " + code + ")."
+                                   : "xm reconnect failed (exit " + code + ")."
             setMessage(msg)
-            root.notify("xm reset", msg)
-            root.refreshStatus()
+            root.notify("xm reconnect", msg)
+            root.refreshInfo()
         })) {
             setMessage("Still running the previous command.")
         }
@@ -1073,13 +794,14 @@ PlasmoidItem {
         if (!ableToRun) {
             return
         }
-        setMessage("Fixing for a meeting (reset + call, about 6 seconds)...")
+        testResult = null
+        setMessage("Fixing for a meeting (reconnect + Call; usually ~7s, longer if the link is dead)...")
         if (!run("fix", "fix", false, function (out, code) {
             var msg = (code === 0) ? "Ready for the meeting: mic + speaker."
                                    : "xm fix failed (exit " + code + ")."
             setMessage(msg)
             root.notify("xm fix", msg)
-            root.refreshStatus()
+            root.refreshInfo()
         })) {
             setMessage("Still running the previous command.")
         }
@@ -1111,7 +833,7 @@ PlasmoidItem {
             if (code === 0) {
                 root.notify("xm defaults", msg)
             }
-            root.refreshStatus()
+            root.refreshInfo()
         })) {
             setMessage("Still running the previous command.")
         }
@@ -1143,5 +865,6 @@ PlasmoidItem {
 
     Component.onCompleted: {
         refreshStatus()
+        refreshInfo()
     }
 }

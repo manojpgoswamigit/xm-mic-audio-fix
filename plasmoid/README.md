@@ -2,12 +2,31 @@
 
 A tiny KDE Plasma 6 applet that puts `xm` one click away, right in the panel.
 
+`xm` drives the standard PipeWire `bluez_card` A2DP/HFP profiles, so the widget
+works with Sony WH/WF-1000XM headsets and any other A2DP + HFP/HSP Bluetooth
+headset. Codec and battery details vary by model and firmware. LE Audio/LC3
+(XM6) uses a separate BAP profile set and is not switched here.
+
 ```
 [ Call ]   -> HFP/mSBC   : microphone + speaker   (before a meeting)
 [ Music ]  -> A2DP/LDAC : hi-fi output, no mic   (after a meeting)
 ```
 
-plus `Test mic`, `Reset link`, `Fix`, and a live status indicator.
+plus a real waveform mic test, `Reconnect`, `Fix`, keyboard shortcuts, a
+profile/battery chip header, and an About overlay with a GitHub-marked repo link.
+
+<p align="center">
+  <img src="../assets/screenshot-light.png" alt="XM Headset widget, light theme" width="45%">
+  &nbsp;
+  <img src="../assets/screenshot-dark.png" alt="XM Headset widget, dark theme" width="45%">
+</p>
+
+## Credits
+
+Created by [Manoj Goswami](https://github.com/manojpgoswamigit).
+
+Source code, CLI, and full documentation:
+[manojpgoswamigit/xm-mic-audio-fix](https://github.com/manojpgoswamigit/xm-mic-audio-fix).
 
 ## What it is (and is not)
 
@@ -52,20 +71,36 @@ No new packages, no root, no daemon.
 ```
 a2dp    headset connected, hi-fi profile
 hfp     headset connected, hands-free profile
+off     connected, audio profile standby
 none    no Bluetooth audio card found (headset off)
 error   dependency missing or the audio stack could not be queried
 ```
 
 The panel colour follows that token:
 
-| State | Panel icon |
-|:------|:-----------|
-| `hfp` (call) | green |
-| `a2dp` (music) | theme highlight |
-| `none` (headset off) | grey |
-| busy / error | amber / red |
+| State | Panel glyph | Colour |
+|:------|:------------|:-------|
+| `hfp` (call) | headset | green |
+| `a2dp` (music) | headset | theme highlight |
+| `off` (standby) | headset | amber |
+| `none` (headset off) | inactive Bluetooth | grey |
+| `error` | warning triangle | red |
+| busy / loading | headset, dimmed | amber / grey |
 
-The human-readable `xm status` output is unchanged.
+While the popup is open, the widget also runs `xm info --json` (about 120 ms) to
+fill the header with the device name, codec and battery. That call is deliberately
+kept out of the 2-second panel poll, so Bluetooth is not woken unnecessarily.
+
+The mic test runs `xm test --json --live-file PATH`, which returns the real
+peak level and 50 final bars, and also writes each 100 ms level to `PATH` while
+recording. The widget polls that sidecar file to draw the waveform live, then
+replaces it with the final 50-bar result. `xm test` switches to the Call profile
+first if the headset is in Music mode, so the test cannot fail just because of
+the current profile.
+
+Keyboard shortcuts while the popup is focused: <kbd>C</kbd> Call,
+<kbd>M</kbd> Music, <kbd>T</kbd> Test, <kbd>R</kbd> Reconnect,
+<kbd>F</kbd> Fix, <kbd>Esc</kbd> close About/confirmation.
 
 ## Configuration
 
@@ -77,7 +112,7 @@ Right-click the applet -> **Configure**:
 | Refresh interval | 2 s | how often the panel polls `xm status --machine`. `xm` answers in ~15 ms, so 2 s costs nothing |
 | Show profile and result text | on | status line + result messages in the popup |
 | Ask before restoring defaults | on | confirmation before the one action that changes your audio config |
-| Notifications | on | a notification when a slow action (`reset`, `fix`) finishes |
+| Notifications | on | a notification when a slow action (`reconnect`, `fix`, `test`) finishes |
 
 ## Uninstall / rollback
 
