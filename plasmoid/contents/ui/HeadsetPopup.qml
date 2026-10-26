@@ -260,6 +260,7 @@ Item {
 
                     PlasmaComponents3.Label {
                         Layout.fillWidth: true
+                        visible: root.showText
                         text: root.stateText
                         font: Kirigami.Theme.smallFont
                         opacity: 0.72
@@ -575,6 +576,28 @@ Item {
                 opacity: 0.45
                 font: Kirigami.Theme.smallFont
             }
+
+            PlasmaComponents3.ToolButton {
+                id: authorButton
+                Kirigami.Theme.inherit: true
+                text: "Manoj Goswami"
+                icon.name: "internet-web-browser-symbolic"
+                display: PlasmaComponents3.AbstractButton.TextBesideIcon
+                font: Kirigami.Theme.smallFont
+                Accessible.name: "Open Manoj Goswami's GitHub profile"
+                onClicked: Qt.openUrlExternally("https://github.com/manojpgoswamigit")
+                PlasmaComponents3.ToolTip {
+                    text: "Author profile on GitHub"
+                    visible: authorButton.hovered
+                }
+                background: Rectangle {
+                    radius: Kirigami.Units.smallSpacing
+                    color: authorButton.hovered
+                        ? Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                  Kirigami.Theme.textColor.b, 0.08)
+                        : "transparent"
+                }
+            }
         }
     }
 
@@ -775,6 +798,49 @@ Item {
                             font: Kirigami.Theme.smallFont
                             opacity: 0.5
                             wrapMode: Text.WordWrap
+                        }
+
+                        Kirigami.Separator {
+                            Layout.fillWidth: true
+                            Layout.topMargin: Kirigami.Units.smallSpacing
+                            opacity: 0.3
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+
+                            PlasmaComponents3.ToolButton {
+                                id: aboutAuthorButton
+                                Kirigami.Theme.inherit: true
+                                text: "Created by Manoj Goswami"
+                                icon.name: "user-identity-symbolic"
+                                display: PlasmaComponents3.AbstractButton.TextBesideIcon
+                                font: Kirigami.Theme.smallFont
+                                Accessible.name: "Open Manoj Goswami's GitHub profile"
+                                onClicked: Qt.openUrlExternally("https://github.com/manojpgoswamigit")
+                                PlasmaComponents3.ToolTip {
+                                    text: "Author profile on GitHub"
+                                    visible: aboutAuthorButton.hovered
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            PlasmaComponents3.ToolButton {
+                                id: aboutRepoButton
+                                Kirigami.Theme.inherit: true
+                                text: "GitHub repo"
+                                icon.name: "internet-web-browser-symbolic"
+                                display: PlasmaComponents3.AbstractButton.TextBesideIcon
+                                font: Kirigami.Theme.smallFont
+                                Accessible.name: "Open the xm GitHub repository"
+                                onClicked: Qt.openUrlExternally("https://github.com/manojpgoswamigit/xm-mic-audio-fix")
+                                PlasmaComponents3.ToolTip {
+                                    text: "Source code and documentation"
+                                    visible: aboutRepoButton.hovered
+                                }
+                            }
                         }
                     }
 

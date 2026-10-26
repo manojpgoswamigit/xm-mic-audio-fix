@@ -36,7 +36,8 @@
       <default>true</default>
       <label>Show the current profile and result messages in the popup</label>
       <whatsthis>
-        Turn off for a compact popup with just the buttons.
+        Hide the profile line and transient result messages. The device header,
+        codec/battery chips, buttons and mic test stay visible.
       </whatsthis>
     </entry>
 

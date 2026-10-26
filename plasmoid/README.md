@@ -21,6 +21,13 @@ device/codec/battery header.
   <img src="../assets/screenshot-dark.png" alt="XM Headset widget, dark theme" width="45%">
 </p>
 
+## Credits
+
+Created by [Manoj Goswami](https://github.com/manojpgoswamigit).
+
+Source code, CLI, and full documentation:
+[manojpgoswamigit/xm-mic-audio-fix](https://github.com/manojpgoswamigit/xm-mic-audio-fix).
+
 ## What it is (and is not)
 
 It is a **click-runner and status light**. It does not touch PipeWire, BlueZ or

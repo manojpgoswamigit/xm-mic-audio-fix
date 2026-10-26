@@ -77,9 +77,24 @@ PlasmoidItem {
         return dir.length > 0 ? dir : "/tmp"
     }
 
-    readonly property string xmBin: configuredPath.length > 0
-        ? configuredPath
-        : homeDir + "/.local/bin/xm"
+    readonly property string xmBin: {
+        var p = configuredPath.length > 0
+            ? configuredPath
+            : homeDir + "/.local/bin/xm"
+        p = pathFromUrl(String(p).trim())
+        if (p.length === 0) {
+            p = homeDir + "/.local/bin/xm"
+        }
+        // The config field calls ~/.local/bin/xm home, so accept a leading
+        // tilde even when quotePath() has to quote the resulting path.
+        if (p === "~") {
+            return homeDir
+        }
+        if (p.indexOf("~/") === 0) {
+            return homeDir + p.substring(1)
+        }
+        return p
+    }
 
     // -------------------------------------------------------------------------
     // State

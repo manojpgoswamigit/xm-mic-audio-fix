@@ -22,6 +22,12 @@
 
 <p><em>One-click profile switching, device/codec/battery status, a live waveform mic test, link reconnect, and full Breeze Light & Dark theme support.</em></p>
 
+<p align="center">
+  Built by <a href="https://github.com/manojpgoswamigit">Manoj Goswami</a>
+  ·
+  <a href="https://github.com/manojpgoswamigit/xm-mic-audio-fix">GitHub repository</a>
+</p>
+
 </div>
 
 ---
@@ -346,14 +352,17 @@ headset-free regression tests using fake `pactl`/`parec`/`bluetoothctl` binaries
 ./tests/test-generic-headset.sh
 ./tests/test-profile-switch.sh
 ./tests/test-live-waveform.sh
+./tests/test-widget-config.sh
 ```
 
 They prove that Call/Music return as soon as the profile is active, that cards
 offering only the mandatory CVSD/SBC profiles still switch, that a non-Sony
 audio device is detected without relying on model names, and that
 `xm test --live-file` publishes real levels during recording, with the final
-JSON still containing 50 bars. Screenshots and the demo GIF are rendered from
-the real QML with:
+JSON still containing 50 bars. The configuration test keeps `main.xml`,
+the `cfg_<key>` aliases in the config page, and every `readCfg()` lookup in
+sync, so a setting can never silently stop saving. Screenshots and the demo GIF
+are rendered from the real QML with:
 
 ```bash
 ./preview/render-assets.sh
@@ -372,7 +381,7 @@ the real QML with:
 ---
 
 <div align="center">
-  <sub>Crafted to end meeting mic dropouts once and for all.</sub>
+  <sub>Crafted by <a href="https://github.com/manojpgoswamigit">Manoj Goswami</a> to end meeting mic dropouts once and for all.</sub>
   <br>
-  <sub>Licensed under <a href="LICENSE">MIT</a>.</sub>
+  <sub><a href="https://github.com/manojpgoswamigit/xm-mic-audio-fix">GitHub repository</a> · Licensed under <a href="LICENSE">MIT</a>.</sub>
 </div>
