@@ -1,10 +1,10 @@
 // =============================================================================
-//  MicTestPanel - the "is my microphone actually working?" card
+//  MicTestPanel - the live microphone instrument
 // =============================================================================
-//  Three states, one card:
-//    idle     "Microphone check" + Test button + faint placeholder bars
-//    testing  live 50-bar waveform, countdown chip and progress bar
-//    result   50-bar recording waveform + verdict chip + peak dBFS + retry
+//  The hero of the popup. Three states, one panel:
+//    idle     "MIC INPUT", READY chip, placeholder bars, Test button
+//    testing  live 50-bar waveform, countdown readout and LISTENING chip
+//    result   final 50-bar envelope, peak dBFS, verdict chip and icon
 //
 //  The waveform is real data from `xm test --json` (100 ms windows), so a
 //  silently-dead SCO link looks flat instead of pretending to work.
@@ -45,7 +45,7 @@ Rectangle {
             case "live":   return greenColor
             case "quiet":  return amberColor
             case "silent": return redColor
-            default:       return hasError ? amberColor : accentColor
+            default:       return hasError ? redColor : accentColor
         }
     }
 
@@ -67,8 +67,7 @@ Rectangle {
                                   : "Switch to Call first, then try again."
         }
         switch (verdict) {
-            case "live":   return "Peak " + Number(result.peak_dbfs).toFixed(1)
-                                   + " dBFS over " + Number(result.duration).toFixed(1) + "s"
+            case "live":   return "Call profile · microphone live"
             case "quiet":  return "Move closer, or raise the headset mic volume"
             case "silent": return "Try Reconnect, then test again"
             default:       return profileState === "hfp"
@@ -77,8 +76,43 @@ Rectangle {
         }
     }
 
-    // Placeholder bars, so the card has a shape before the first test.
-    // Kept intentionally narrow: 28 thin bars read as a waveform, not a bar chart.
+    readonly property string statusIcon: {
+        if (hasError) return "dialog-error-symbolic"
+        if (testing) return "media-record-symbolic"
+        switch (verdict) {
+            case "live":   return "audio-input-microphone-symbolic"
+            case "quiet":  return "audio-volume-low-symbolic"
+            case "silent": return "audio-volume-muted-symbolic"
+            default:       return "audio-input-microphone-symbolic"
+        }
+    }
+
+    readonly property string stateChipText: {
+        if (hasError) return "NO MIC"
+        if (testing) return "LISTENING"
+        switch (verdict) {
+            case "live":   return "LIVE"
+            case "quiet":  return "QUIET"
+            case "silent": return "SILENT"
+            default:       return "READY"
+        }
+    }
+
+    readonly property string peakText: {
+        if (testing) return String(countdown)
+        if (hasResult && !hasError && !isNaN(Number(result.peak_dbfs)))
+            return Number(result.peak_dbfs).toFixed(1).replace("-", "−")
+        return "—"
+    }
+
+    readonly property string durationText: {
+        if (testing || (hasResult && hasError)) return ""
+        if (hasResult && !hasError && !isNaN(Number(result.duration)))
+            return Number(result.duration).toFixed(1) + " s"
+        return "5 s"
+    }
+
+    // Placeholder bars, so the panel has a shape before the first test.
     readonly property var idleBars: [0.07, 0.14, 0.09, 0.20, 0.12, 0.06, 0.16, 0.10,
                                      0.05, 0.13, 0.08, 0.15, 0.06, 0.11, 0.07, 0.12,
                                      0.09, 0.18, 0.10, 0.07, 0.14, 0.08, 0.16, 0.11,
@@ -99,9 +133,7 @@ Rectangle {
         return out.slice(Math.max(0, out.length - 50))
     }
 
-    implicitHeight: testing ? Kirigami.Units.gridUnit * 8.2
-                            : (hasResult ? Kirigami.Units.gridUnit * 8.9
-                                         : Kirigami.Units.gridUnit * 6.1)
+    implicitHeight: Kirigami.Units.gridUnit * 9.8
     radius: Kirigami.Units.smallSpacing * 1.8
     color: Qt.rgba(verdictColor.r, verdictColor.g, verdictColor.b,
                    hasResult || testing ? (isDark ? 0.10 : 0.07) : 0.045)
@@ -119,27 +151,128 @@ Rectangle {
         anchors.bottomMargin: Kirigami.Units.smallSpacing * 1.5
         spacing: Kirigami.Units.smallSpacing
 
-        // ---- header ------------------------------------------------------
+        // ---- instrument header -------------------------------------------
         RowLayout {
             Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing * 1.2
+
+            PlasmaComponents3.Label {
+                text: "MIC INPUT"
+                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                font.bold: true
+                font.letterSpacing: 1.1
+                color: panel.verdictColor
+                opacity: 0.9
+            }
+
+            Chip {
+                text: panel.stateChipText
+                tint: panel.verdictColor
+                filled: true
+            }
+
+            Item { Layout.fillWidth: true }
+
+            PlasmaComponents3.Label {
+                visible: text.length > 0
+                text: panel.durationText
+                font: Kirigami.Theme.smallFont
+                color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                               Kirigami.Theme.textColor.b, 0.6)
+            }
+        }
+
+        // ---- live instrument ---------------------------------------------
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
             spacing: Kirigami.Units.smallSpacing * 1.5
 
-            Rectangle {
-                Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.9
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.9
-                radius: width / 2
-                color: Qt.rgba(verdictColor.r, verdictColor.g, verdictColor.b,
-                               testing ? 0.26 : 0.16)
-                Behavior on color { ColorAnimation { duration: 180 } }
+            ColumnLayout {
+                Layout.preferredWidth: Kirigami.Units.gridUnit * 4.6
+                Layout.fillHeight: true
+                spacing: 0
 
-                Kirigami.Icon {
-                    anchors.centerIn: parent
-                    width:  Kirigami.Units.iconSizes.smallMedium
-                    height: Kirigami.Units.iconSizes.smallMedium
-                    source: "audio-input-microphone-symbolic"
-                    color: panel.verdictColor
-                    Behavior on color { ColorAnimation { duration: 180 } }
+                Item { Layout.fillHeight: true }
+
+                PlasmaComponents3.Label {
+                    text: panel.peakText
+                    font.bold: true
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 12
+                    color: panel.peakText === "—"
+                        ? Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                  Kirigami.Theme.textColor.b, 0.35)
+                        : panel.verdictColor
                 }
+
+                PlasmaComponents3.Label {
+                    text: panel.testing ? "seconds left" : "dBFS peak"
+                    font: Kirigami.Theme.smallFont
+                    color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                   Kirigami.Theme.textColor.b, 0.6)
+                }
+
+                Item { Layout.fillHeight: true }
+            }
+
+            Item {
+                id: barsArea
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+
+                property var levels: panel.testing ? panel.testBars
+                                   : (panel.hasResult && !panel.hasError
+                                        ? panel.result.levels : panel.idleBars)
+                property int barCount: levels ? levels.length : 0
+                property real gap: 2
+                property real barWidth: barCount > 0
+                    ? Math.max(1, (width - (barCount - 1) * gap) / barCount) : 0
+
+                Repeater {
+                    model: barsArea.levels
+
+                    Rectangle {
+                        required property int index
+                        required property var modelData
+
+                        x: index * (barsArea.barWidth + barsArea.gap)
+                        width: barsArea.barWidth
+                        radius: width / 2
+                        height: Math.max(2, barsArea.height * Math.min(1.0,
+                                      (Number(modelData) || 0)
+                                      * (panel.hasResult || panel.testing ? 1.0 : 1.8)))
+                        y: barsArea.height - height
+                        color: {
+                            if (panel.hasResult && !panel.hasError) {
+                                return Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
+                                               panel.verdictColor.b, 0.85)
+                            }
+                            if (panel.testing) {
+                                return Qt.rgba(panel.accentColor.r, panel.accentColor.g,
+                                               panel.accentColor.b, 0.85)
+                            }
+                            return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                           Kirigami.Theme.textColor.b,
+                                           panel.hasError ? 0.08 : 0.14)
+                        }
+                        Behavior on height { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
+                        Behavior on color  { ColorAnimation  { duration: 180 } }
+                    }
+                }
+            }
+        }
+
+        // ---- verdict / action --------------------------------------------
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Kirigami.Units.smallSpacing
+
+            Kirigami.Icon {
+                Layout.preferredWidth: 14
+                Layout.preferredHeight: 14
+                source: panel.statusIcon
+                color: panel.verdictColor
+                Behavior on color { ColorAnimation { duration: 180 } }
             }
 
             ColumnLayout {
@@ -162,33 +295,13 @@ Rectangle {
                 }
             }
 
-            Rectangle {
-                visible: panel.testing
-                Layout.preferredWidth:  Kirigami.Units.gridUnit * 2.2
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.3
-                radius: height / 2
-                color: Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
-                               panel.verdictColor.b, 0.20)
-                border.width: 1
-                border.color: Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
-                                      panel.verdictColor.b, 0.45)
-
-                PlasmaComponents3.Label {
-                    anchors.centerIn: parent
-                    text: panel.countdown + "s"
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                    font.bold: true
-                    color: panel.verdictColor
-                }
-            }
-
             ActionButton {
                 id: testButton
-                visible: !panel.testing
                 text: panel.hasResult ? "Again" : "Test"
                 icon.name: "audio-input-microphone-symbolic"
                 primary: true
                 accentColor: panel.verdictColor
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 2
                 enabled: !panel.testing
                 onClicked: panel.testRequested()
                 PlasmaComponents3.ToolTip {
@@ -197,103 +310,6 @@ Rectangle {
                     visible: testButton.hovered
                 }
             }
-        }
-
-        // ---- waveform ----------------------------------------------------
-        Item {
-            id: barsArea
-            Layout.fillWidth: true
-            Layout.preferredHeight: Kirigami.Units.gridUnit
-                * (panel.testing || panel.hasResult ? 2.3 : 1.4)
-            Layout.topMargin: Kirigami.Units.smallSpacing * 0.5
-
-            property var levels: panel.testing ? panel.testBars
-                               : (panel.hasResult && !panel.hasError
-                                    ? panel.result.levels : panel.idleBars)
-            property int barCount: levels ? levels.length : 0
-            property real gap: 2
-            property real barWidth: barCount > 0
-                ? Math.max(1, (width - (barCount - 1) * gap) / barCount) : 0
-
-            Repeater {
-                model: barsArea.levels
-
-                Rectangle {
-                    required property int index
-                    required property var modelData
-
-                    x: index * (barsArea.barWidth + barsArea.gap)
-                    width: barsArea.barWidth
-                    radius: width / 2
-                    height: Math.max(2, barsArea.height * Math.min(1.0,
-                                  (Number(modelData) || 0)
-                                  * (panel.hasResult || panel.testing ? 1.0 : 1.8)))
-                    y: barsArea.height - height
-                    color: panel.hasResult || panel.testing
-                        ? Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
-                                  panel.verdictColor.b, panel.hasError ? 0.35 : 0.85)
-                        : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                  Kirigami.Theme.textColor.b, 0.14)
-                    Behavior on height { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
-                    Behavior on color  { ColorAnimation  { duration: 180 } }
-                }
-            }
-        }
-
-        // ---- progress / verdict footer ------------------------------------
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            Rectangle {
-                visible: panel.testing
-                Layout.fillWidth: true
-                Layout.preferredHeight: 3
-                radius: 1.5
-                color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                               Kirigami.Theme.textColor.b, 0.12)
-
-                Rectangle {
-                    height: parent.height
-                    radius: parent.height / 2
-                    width: parent.width * Math.min(1, Math.max(0, (5 - panel.countdown) / 5))
-                    color: panel.verdictColor
-                    Behavior on width { NumberAnimation { duration: 900 } }
-                }
-            }
-
-            Rectangle {
-                visible: panel.hasResult && !panel.testing
-                Layout.preferredWidth: verdictLabel.implicitWidth
-                                      + Kirigami.Units.smallSpacing * 2.4
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.25
-                radius: height / 2
-                color: Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
-                               panel.verdictColor.b, 0.18)
-                border.width: 1
-                border.color: Qt.rgba(panel.verdictColor.r, panel.verdictColor.g,
-                                      panel.verdictColor.b, 0.45)
-
-                PlasmaComponents3.Label {
-                    id: verdictLabel
-                    anchors.centerIn: parent
-                    text: panel.hasError ? (panel.label.length ? panel.label : "NO MIC")
-                                         : panel.label
-                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                    font.bold: true
-                    color: panel.verdictColor
-                }
-            }
-
-            PlasmaComponents3.Label {
-                visible: panel.hasResult && !panel.testing && !panel.hasError
-                text: panel.hasResult
-                    ? Number(panel.result.duration).toFixed(1) + " s" : ""
-                font: Kirigami.Theme.smallFont
-                opacity: 0.55
-            }
-
-            Item { Layout.fillWidth: true }
         }
     }
 }

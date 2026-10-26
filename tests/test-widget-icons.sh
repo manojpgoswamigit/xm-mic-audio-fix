@@ -124,6 +124,17 @@ if "iconName: root.batteryIcon" not in popup:
 if "Chip {" not in popup:
     errors.append("header must use the shared Chip component")
 
+if "readonly property string statusIcon" not in mic_panel:
+    errors.append("MicTestPanel must define statusIcon")
+for icon in ('"media-record-symbolic"', '"audio-volume-low-symbolic"',
+             '"audio-volume-muted-symbolic"', '"dialog-error-symbolic"'):
+    if icon not in mic_panel:
+        errors.append(f"MicTestPanel must use {icon}")
+if '"MIC INPUT"' not in mic_panel:
+    errors.append('MicTestPanel must title the hero "MIC INPUT"')
+if '"−"' not in mic_panel:
+    errors.append("MicTestPanel must format negative peaks with a typographic minus")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

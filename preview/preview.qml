@@ -142,6 +142,9 @@ Window {
             case "hfp":
             case "testing":
             case "live":
+            case "silent":
+            case "quiet":
+            case "micerror":
             case "about":
                 return "hfp"
             case "none":
@@ -206,6 +209,18 @@ Window {
                 ok: true, verdict: "silent", label: "SILENT",
                 peak: 41, peak_dbfs: -58.1, duration: 5.0,
                 levels: wave(0.02, 0.03)
+            }
+        }
+        if (name === "quiet") {
+            return {
+                ok: true, verdict: "quiet", label: "QUIET",
+                peak_dbfs: -48.0, duration: 5.0, levels: wave(0.08, 0.05)
+            }
+        }
+        if (name === "micerror") {
+            return {
+                ok: false, verdict: "error", label: "NO MIC",
+                message: "Switch to Call first, then try again.", levels: []
             }
         }
         return null
