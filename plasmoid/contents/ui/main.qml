@@ -174,6 +174,15 @@ PlasmoidItem {
         }
     }
 
+    // The glyph describes the connection; the colour describes the profile.
+    readonly property string compactIconSource: {
+        switch (headsetState) {
+            case "none":  return "network-bluetooth-inactive-symbolic"
+            case "error": return "dialog-warning-symbolic"
+            default:      return "audio-headset-symbolic"
+        }
+    }
+
     // -------------------------------------------------------------------------
     // Tooltip
     // -------------------------------------------------------------------------
@@ -220,7 +229,7 @@ PlasmoidItem {
             anchors.centerIn: parent
             width:  Math.min(parent.width, parent.height) * 0.82
             height: width
-            source: "audio-headset-symbolic"
+            source: root.compactIconSource
             color:  root.stateColor
             opacity: (root.busy || root.testing) ? 0.5 : 1.0
             Behavior on opacity { NumberAnimation { duration: 220 } }

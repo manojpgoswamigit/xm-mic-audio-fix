@@ -78,13 +78,14 @@ error   dependency missing or the audio stack could not be queried
 
 The panel colour follows that token:
 
-| State | Panel icon |
-|:------|:-----------|
-| `hfp` (call) | green |
-| `a2dp` (music) | theme highlight |
-| `off` (standby) | amber |
-| `none` (headset off) | grey |
-| busy / error | amber / red |
+| State | Panel glyph | Colour |
+|:------|:------------|:-------|
+| `hfp` (call) | headset | green |
+| `a2dp` (music) | headset | theme highlight |
+| `off` (standby) | headset | amber |
+| `none` (headset off) | inactive Bluetooth | grey |
+| `error` | warning triangle | red |
+| busy / loading | headset, dimmed | amber / grey |
 
 While the popup is open, the widget also runs `xm info --json` (about 120 ms) to
 fill the header with the device name, codec and battery. That call is deliberately

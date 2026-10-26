@@ -85,6 +85,29 @@ if "internet-web-browser-symbolic" in popup:
 if 'Accessible.name: "Open the xm GitHub repository"' not in repo:
     errors.append("aboutRepoButton must keep its accessible name")
 
+main_path = ui_dir / "main.qml"
+main = main_path.read_text(encoding="utf-8")
+
+if "readonly property string compactIconSource" not in main:
+    errors.append("main.qml must define compactIconSource")
+if "source: root.compactIconSource" not in main:
+    errors.append("compactRepresentation must use compactIconSource")
+if "network-bluetooth-inactive-symbolic" not in main:
+    errors.append("compact icon must switch to the inactive Bluetooth glyph")
+if "dialog-warning-symbolic" not in main:
+    errors.append("compact icon must switch to the warning glyph on error")
+
+if "readonly property string headerIcon" not in popup:
+    errors.append("HeadsetPopup must define headerIcon")
+if "source: root.headerIcon" not in popup:
+    errors.append("popup header must use headerIcon")
+
+recovery = block('id: recoveryRow', 1800)
+if "color: root.stateColor" not in recovery:
+    errors.append("recovery card must use the state colour")
+if "color: root.colorBusy" in recovery:
+    errors.append("recovery card must not use the busy colour")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

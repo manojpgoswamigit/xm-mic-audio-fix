@@ -83,6 +83,14 @@ Item {
         }
     }
 
+    readonly property string headerIcon: {
+        switch (state) {
+            case "none":  return "network-bluetooth-inactive-symbolic"
+            case "error": return "dialog-warning-symbolic"
+            default:      return "audio-headset-symbolic"
+        }
+    }
+
     readonly property bool connected: state === "a2dp" || state === "hfp" || state === "off"
     readonly property bool canAct:    !busy && !testing
     readonly property bool canSwitch: connected && canAct
@@ -200,7 +208,7 @@ Item {
                     anchors.centerIn: parent
                     width:  Kirigami.Units.iconSizes.medium
                     height: Kirigami.Units.iconSizes.medium
-                    source: "audio-headset-symbolic"
+                    source: root.headerIcon
                     color: root.stateColor
                     opacity: root.busy && !root.testing ? 0.45 : 1.0
                     Behavior on color   { ColorAnimation  { duration: 180 } }
@@ -370,10 +378,10 @@ Item {
             visible: root.state === "none" || root.state === "error"
             implicitHeight: recoveryRow.implicitHeight + Kirigami.Units.largeSpacing * 2
             radius: Kirigami.Units.smallSpacing * 1.8
-            color: Qt.rgba(root.colorBusy.r, root.colorBusy.g, root.colorBusy.b,
+            color: Qt.rgba(root.stateColor.r, root.stateColor.g, root.stateColor.b,
                            root.isDark ? 0.10 : 0.07)
             border.width: 1
-            border.color: Qt.rgba(root.colorBusy.r, root.colorBusy.g, root.colorBusy.b, 0.32)
+            border.color: Qt.rgba(root.stateColor.r, root.stateColor.g, root.stateColor.b, 0.32)
 
             RowLayout {
                 id: recoveryRow
@@ -389,7 +397,7 @@ Item {
                     Layout.preferredHeight: Kirigami.Units.iconSizes.medium
                     source: root.state === "none" ? "network-bluetooth-inactive-symbolic"
                                                   : "dialog-warning-symbolic"
-                    color: root.colorBusy
+                    color: root.stateColor
                 }
 
                 ColumnLayout {
@@ -419,7 +427,7 @@ Item {
                     text: "Reconnect"
                     icon.name: "view-refresh-symbolic"
                     primary: true
-                    accentColor: root.colorBusy
+                    accentColor: root.stateColor
                     enabled: root.canAct
                     onClicked: root.reconnectRequested()
                 }
