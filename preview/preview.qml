@@ -145,6 +145,7 @@ Window {
             case "silent":
             case "quiet":
             case "micerror":
+            case "notice":
             case "about":
                 return "hfp"
             case "none":
@@ -190,9 +191,10 @@ Window {
 
     function previewMessage(name) {
         switch (name) {
-            case "busy":  return "Switching to call..."
-            case "error": return "xm could not report a profile."
-            default:      return ""
+            case "busy":   return "Switching to call..."
+            case "notice": return "Call profile on: mic + speaker both work."
+            case "error":  return "xm could not report a profile."
+            default:       return ""
         }
     }
 

@@ -110,6 +110,7 @@ Item {
     readonly property bool connected: state === "a2dp" || state === "hfp" || state === "off"
     readonly property bool canAct:    !busy && !testing
     readonly property bool canSwitch: connected && canAct
+    readonly property bool showProfiles: connected
 
     readonly property string deviceName: {
         var n = infoObj.device
@@ -197,7 +198,7 @@ Item {
         anchors.rightMargin:  Kirigami.Units.largeSpacing
         anchors.topMargin:    Kirigami.Units.largeSpacing
         anchors.bottomMargin: Kirigami.Units.largeSpacing
-        spacing: Kirigami.Units.largeSpacing
+        spacing: Kirigami.Units.smallSpacing * 1.5
 
         // ---- header ------------------------------------------------------
         RowLayout {
@@ -372,9 +373,24 @@ Item {
             }
         }
 
+        // ---- microphone test --------------------------------------------
+        MicTestPanel {
+            Layout.fillWidth: true
+            visible: root.connected
+            testing: root.testing
+            countdown: root.countdown
+            result: root.testResult
+            liveLevels: root.liveLevels
+            profileState: root.state
+            accentColor: root.stateColor
+            onTestRequested: root.testRequested()
+        }
+
         // ---- profile cards ----------------------------------------------
         RowLayout {
+            objectName: "profileRow"
             Layout.fillWidth: true
+            visible: root.showProfiles
             spacing: Kirigami.Units.smallSpacing * 1.6
 
             ProfileCard {
@@ -404,63 +420,36 @@ Item {
             }
         }
 
-        // ---- microphone test --------------------------------------------
-        MicTestPanel {
+        // ---- maintenance -------------------------------------------------
+        RowLayout {
             Layout.fillWidth: true
             visible: root.connected
-            testing: root.testing
-            countdown: root.countdown
-            result: root.testResult
-            liveLevels: root.liveLevels
-            profileState: root.state
-            accentColor: root.stateColor
-            onTestRequested: root.testRequested()
-        }
+            spacing: Kirigami.Units.smallSpacing * 1.6
 
-        // ---- helpers -----------------------------------------------------
-        ColumnLayout {
-            Layout.fillWidth: true
-            visible: root.connected
-            spacing: Kirigami.Units.smallSpacing * 0.8
-
-            RowLayout {
+            ActionButton {
                 Layout.fillWidth: true
-                spacing: Kirigami.Units.smallSpacing * 1.6
-
-                ActionButton {
-                    Layout.fillWidth: true
-                    text: "Reconnect"
-                    icon.name: "view-refresh-symbolic"
-                    enabled: root.canAct
-                    onClicked: root.reconnectRequested()
-                    PlasmaComponents3.ToolTip {
-                        text: "Disconnect and reconnect the headset to clear a dead SCO link (R)"
-                        visible: parent.hovered
-                    }
-                }
-
-                ActionButton {
-                    Layout.fillWidth: true
-                    text: "Fix for meeting"
-                    icon.name: "tools-symbolic"
-                    primary: true
-                    accentColor: root.colorHfp
-                    enabled: root.canAct
-                    onClicked: root.fixRequested()
-                    PlasmaComponents3.ToolTip {
-                        text: "Reconnect, then switch to Call (F)"
-                        visible: parent.hovered
-                    }
+                text: "Reconnect"
+                icon.name: "view-refresh-symbolic"
+                enabled: root.canAct
+                onClicked: root.reconnectRequested()
+                PlasmaComponents3.ToolTip {
+                    text: "Disconnect and reconnect the headset to clear a dead SCO link (R)"
+                    visible: parent.hovered
                 }
             }
 
-            PlasmaComponents3.Label {
+            ActionButton {
                 Layout.fillWidth: true
-                text: "Fix = reconnect + Call, for when the mic is silent but connected."
-                font: Kirigami.Theme.smallFont
-                opacity: 0.55
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WordWrap
+                text: "Fix for meeting"
+                icon.name: "tools-symbolic"
+                primary: true
+                accentColor: root.colorHfp
+                enabled: root.canAct
+                onClicked: root.fixRequested()
+                PlasmaComponents3.ToolTip {
+                    text: "Reconnect, then switch to Call (F)"
+                    visible: parent.hovered
+                }
             }
         }
 
@@ -480,7 +469,7 @@ Item {
                 id: restoreButton
                 Kirigami.Theme.inherit: true
                 text: "Restore audio defaults"
-                icon.name: "edit-undo-symbolic"
+                icon.name: "edit-reset-symbolic"
                 display: PlasmaComponents3.AbstractButton.TextBesideIcon
                 enabled: root.canAct
                 onClicked: root.restoreRequested()
@@ -497,7 +486,7 @@ Item {
                     Kirigami.Icon {
                         Layout.preferredWidth:  Kirigami.Units.iconSizes.small
                         Layout.preferredHeight: Kirigami.Units.iconSizes.small
-                        source: "edit-undo-symbolic"
+                        source: "edit-reset-symbolic"
                         opacity: 0.55
                     }
 
@@ -515,6 +504,13 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
+
+            Kirigami.Icon {
+                Layout.preferredWidth:  Kirigami.Units.iconSizes.small
+                Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                source: "utilities-terminal-symbolic"
+                opacity: 0.45
+            }
 
             PlasmaComponents3.Label {
                 text: "via xm"

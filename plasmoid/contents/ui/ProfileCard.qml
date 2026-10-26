@@ -33,7 +33,7 @@ PlasmaComponents3.Button {
     // Follow the popup's palette instead of the system button palette.
     Kirigami.Theme.inherit: true
 
-    implicitHeight: Kirigami.Units.gridUnit * 6.7
+    implicitHeight: Kirigami.Units.gridUnit * 3.2
     padding: 0
     hoverEnabled: true
     activeFocusOnTab: true
@@ -75,77 +75,60 @@ PlasmaComponents3.Button {
         Behavior on border.color       { ColorAnimation { duration: 140 } }
     }
 
-    contentItem: ColumnLayout {
+    contentItem: RowLayout {
         anchors.fill: parent
-        anchors.leftMargin:   Kirigami.Units.largeSpacing
-        anchors.rightMargin:  Kirigami.Units.largeSpacing
-        anchors.topMargin:    Kirigami.Units.largeSpacing
-        anchors.bottomMargin: Kirigami.Units.largeSpacing
-        spacing: 3
+        anchors.leftMargin:   Kirigami.Units.smallSpacing * 1.5
+        anchors.rightMargin:  Kirigami.Units.smallSpacing * 1.5
+        spacing: Kirigami.Units.smallSpacing
 
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: Kirigami.Units.smallSpacing
-
-            Rectangle {
-                Layout.preferredWidth:  Kirigami.Units.gridUnit * 2.1
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.1
-                radius: Kirigami.Units.smallSpacing * 1.4
-                color: Qt.rgba(card.accentColor.r, card.accentColor.g,
-                               card.accentColor.b, card.isActive ? 0.22 : 0.13)
-                Behavior on color { ColorAnimation { duration: 140 } }
-
-                Kirigami.Icon {
-                    anchors.centerIn: parent
-                    width:  Kirigami.Units.iconSizes.smallMedium
-                    height: Kirigami.Units.iconSizes.smallMedium
-                    source: card.cardIcon
-                    color: card.isActive ? card.accentColor : Kirigami.Theme.textColor
-                    opacity: card.isActive ? 1.0 : 0.75
-                    Behavior on color { ColorAnimation { duration: 140 } }
-                }
-            }
-
-            Item { Layout.fillWidth: true }
-
-            Rectangle {
-                Layout.alignment: Qt.AlignTop
-                visible: card.isActive
-                Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.25
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.25
-                radius: width / 2
-                color: card.accentColor
-
-                Kirigami.Icon {
-                    anchors.centerIn: parent
-                    width:  Kirigami.Units.iconSizes.small
-                    height: Kirigami.Units.iconSizes.small
-                    source: "checkmark-symbolic"
-                    color: (card.accentColor.r * 0.299
-                          + card.accentColor.g * 0.587
-                          + card.accentColor.b * 0.114) > 0.62 ? "#101314" : "#ffffff"
-                }
-            }
-        }
-
-        Item { Layout.preferredHeight: 1 }
-
-        PlasmaComponents3.Label {
-            Layout.fillWidth: true
-            text: card.cardTitle
-            font.bold: true
-            font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
+        Kirigami.Icon {
+            source: card.cardIcon
+            Layout.preferredWidth:  Kirigami.Units.iconSizes.smallMedium
+            Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
             color: card.isActive ? card.accentColor : Kirigami.Theme.textColor
-            elide: Text.ElideRight
+            opacity: card.isActive ? 1.0 : 0.75
             Behavior on color { ColorAnimation { duration: 140 } }
         }
 
-        PlasmaComponents3.Label {
+        ColumnLayout {
             Layout.fillWidth: true
-            text: card.cardSubtitle
-            font: Kirigami.Theme.smallFont
-            opacity: card.isActive ? 0.9 : 0.62
-            elide: Text.ElideRight
+            spacing: 0
+
+            PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                text: card.cardTitle
+                font.bold: true
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
+                color: card.isActive ? card.accentColor : Kirigami.Theme.textColor
+                elide: Text.ElideRight
+                Behavior on color { ColorAnimation { duration: 140 } }
+            }
+
+            PlasmaComponents3.Label {
+                Layout.fillWidth: true
+                text: card.cardSubtitle
+                font: Kirigami.Theme.smallFont
+                opacity: card.isActive ? 0.9 : 0.62
+                elide: Text.ElideRight
+            }
+        }
+
+        Rectangle {
+            visible: card.isActive
+            Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.25
+            Layout.preferredHeight: Kirigami.Units.gridUnit * 1.25
+            radius: width / 2
+            color: card.accentColor
+
+            Kirigami.Icon {
+                anchors.centerIn: parent
+                width:  Kirigami.Units.iconSizes.small
+                height: Kirigami.Units.iconSizes.small
+                source: "checkmark-symbolic"
+                color: (card.accentColor.r * 0.299
+                      + card.accentColor.g * 0.587
+                      + card.accentColor.b * 0.114) > 0.62 ? "#101314" : "#ffffff"
+            }
         }
     }
 

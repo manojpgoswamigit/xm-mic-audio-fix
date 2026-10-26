@@ -60,7 +60,6 @@ if not re.search(
 for icon in (
     '"view-refresh-symbolic"',
     '"tools-symbolic"',
-    '"edit-undo-symbolic"',
     '"audio-headset-symbolic"',
     '"audio-speakers-symbolic"',
 ):
@@ -134,6 +133,24 @@ if '"MIC INPUT"' not in mic_panel:
     errors.append('MicTestPanel must title the hero "MIC INPUT"')
 if '"−"' not in mic_panel:
     errors.append("MicTestPanel must format negative peaks with a typographic minus")
+
+mic_at = popup.find("MicTestPanel {")
+card_at = popup.find("ProfileCard {")
+if mic_at < 0 or card_at < 0 or mic_at > card_at:
+    errors.append("the mic hero must appear above the profile cards")
+
+restore = block('id: restoreButton', 1400)
+if restore.count('"edit-reset-symbolic"') < 2:
+    errors.append("Restore must use edit-reset-symbolic for icon and contentItem")
+if "edit-undo-symbolic" in popup:
+    errors.append("Restore must not use edit-undo-symbolic")
+if '"utilities-terminal-symbolic"' not in popup:
+    errors.append("the via xm footer must use utilities-terminal-symbolic")
+
+if "readonly property bool showProfiles" not in popup:
+    errors.append("HeadsetPopup must define showProfiles")
+if "visible: root.showProfiles" not in popup:
+    errors.append("profile cards must hide when disconnected")
 
 if errors:
     for error in errors:
