@@ -316,12 +316,11 @@ Item {
                 Kirigami.Theme.inherit: true
                 display: PlasmaComponents3.AbstractButton.IconOnly
                 Accessible.name: "About XM Headset"
+                icon.name: "help-about-symbolic"
+                icon.width: Kirigami.Units.iconSizes.smallMedium
+                icon.height: Kirigami.Units.iconSizes.smallMedium
+                icon.color: root.fgColor
                 onClicked: root.aboutVisible = true
-                contentItem: PlasmaComponents3.Label {
-                    text: "ⓘ"
-                    color: root.fgColor
-                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 2
-                }
                 PlasmaComponents3.ToolTip {
                     text: "About this applet and command reference"
                     visible: parent.hovered
@@ -388,7 +387,7 @@ Item {
                 Kirigami.Icon {
                     Layout.preferredWidth:  Kirigami.Units.iconSizes.medium
                     Layout.preferredHeight: Kirigami.Units.iconSizes.medium
-                    source: root.state === "none" ? "network-bluetooth-symbolic"
+                    source: root.state === "none" ? "network-bluetooth-inactive-symbolic"
                                                   : "dialog-warning-symbolic"
                     color: root.colorBusy
                 }
@@ -581,7 +580,7 @@ Item {
                 id: authorButton
                 Kirigami.Theme.inherit: true
                 text: "Manoj Goswami"
-                icon.name: "internet-web-browser-symbolic"
+                icon.name: "user-identity-symbolic"
                 display: PlasmaComponents3.AbstractButton.TextBesideIcon
                 font: Kirigami.Theme.smallFont
                 Accessible.name: "Open Manoj Goswami's GitHub profile"
@@ -668,11 +667,10 @@ Item {
                     Kirigami.Theme.inherit: true
                     display: PlasmaComponents3.AbstractButton.IconOnly
                     Accessible.name: "Close"
-                    contentItem: PlasmaComponents3.Label {
-                        text: "✕"
-                        color: root.fgColor
-                        font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
-                    }
+                    icon.name: "window-close-symbolic"
+                    icon.width: Kirigami.Units.iconSizes.smallMedium
+                    icon.height: Kirigami.Units.iconSizes.smallMedium
+                    icon.color: root.fgColor
                     onClicked: {
                         if (root.aboutVisible) {
                             root.aboutVisible = false
