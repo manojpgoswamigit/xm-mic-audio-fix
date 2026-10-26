@@ -70,6 +70,21 @@ for icon in (
 if '"audio-input-microphone-symbolic"' not in mic_panel:
     errors.append('expected existing icon "audio-input-microphone-symbolic" disappeared')
 
+github_path = ui_dir / "GitHubIcon.qml"
+if not github_path.is_file():
+    raise SystemExit(f"FAIL: missing {github_path}")
+github = github_path.read_text(encoding="utf-8")
+if "PathSvg" not in github:
+    errors.append("GitHubIcon.qml must draw the mark with PathSvg")
+
+repo = block('id: aboutRepoButton', 1600)
+if "GitHubIcon" not in repo:
+    errors.append("aboutRepoButton must draw GitHubIcon")
+if "internet-web-browser-symbolic" in popup:
+    errors.append("the About GitHub link must not use a browser icon")
+if 'Accessible.name: "Open the xm GitHub repository"' not in repo:
+    errors.append("aboutRepoButton must keep its accessible name")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

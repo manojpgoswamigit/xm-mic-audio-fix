@@ -829,10 +829,23 @@ Item {
                                 id: aboutRepoButton
                                 Kirigami.Theme.inherit: true
                                 text: "GitHub repo"
-                                icon.name: "internet-web-browser-symbolic"
-                                display: PlasmaComponents3.AbstractButton.TextBesideIcon
                                 font: Kirigami.Theme.smallFont
                                 Accessible.name: "Open the xm GitHub repository"
+                                contentItem: RowLayout {
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    GitHubIcon {
+                                        Layout.preferredWidth: Kirigami.Units.iconSizes.small
+                                        Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                                        color: Kirigami.Theme.textColor
+                                        opacity: 0.9
+                                    }
+
+                                    PlasmaComponents3.Label {
+                                        text: "GitHub repo"
+                                        font: Kirigami.Theme.smallFont
+                                    }
+                                }
                                 onClicked: Qt.openUrlExternally("https://github.com/manojpgoswamigit/xm-mic-audio-fix")
                                 PlasmaComponents3.ToolTip {
                                     text: "Source code and documentation"
