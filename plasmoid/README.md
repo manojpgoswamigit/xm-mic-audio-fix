@@ -12,8 +12,8 @@ headset. Codec and battery details vary by model and firmware. LE Audio/LC3
 [ Music ]  -> A2DP/LDAC : hi-fi output, no mic   (after a meeting)
 ```
 
-plus a real waveform mic test, `Reconnect`, `Fix`, keyboard shortcuts, and a
-device/codec/battery header.
+plus a real waveform mic test, `Reconnect`, `Fix`, keyboard shortcuts, a
+profile/battery chip header, and an About overlay with a GitHub-marked repo link.
 
 <p align="center">
   <img src="../assets/screenshot-light.png" alt="XM Headset widget, light theme" width="45%">

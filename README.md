@@ -127,8 +127,8 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
 </p>
 
 #### ✨ Key Features
-- **Device-aware header**: headset name, live connection/profile state, active codec (`LDAC`, `AAC`, `mSBC`) and battery percentage.
-- **Tactile Profile Cards**: Large **Call** and **Music** targets with an active badge, hover feedback, and 2px accent borders.
+- **Device-aware header**: a state-tinted headset tile, the headset name, a profile chip with the active codec (`LDAC`, `AAC`, `mSBC`), a battery chip with its level glyph, and a busy spinner while a command runs.
+- **Compact profile cards**: **Call** and **Music** targets with an icon, title, subtitle, an active check badge, hover feedback, and accent borders.
 - **Live microphone test**: one click switches to Call if needed, records 5 seconds, and fills a **50-bar waveform from real 100 ms samples as you speak** with `LIVE` / `QUIET` / `SILENT`, peak dBFS and duration.
 - **Connection recovery**: **Reconnect** retries the Bluetooth link up to three times, waits for the audio card and its profiles, and verifies the link before reporting success. **Fix** = Reconnect + Call.
 - **Keyboard shortcuts**: <kbd>C</kbd> Call · <kbd>M</kbd> Music · <kbd>T</kbd> Test · <kbd>R</kbd> Reconnect · <kbd>F</kbd> Fix · <kbd>Esc</kbd> close About/confirmation.
@@ -137,6 +137,8 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
   - 🔵 **Blue / Accent**: Music mode (A2DP hi-fi audio).
   - 🟠 **Amber**: Command running or device waking from standby.
   - ⚪ **Grey**: Disconnected / no Bluetooth headset detected.
+  - The panel glyph follows the same state: a headset when connected, an inactive Bluetooth mark when no headset is present, and a warning triangle when the audio profile cannot be read.
+- **About overlay**: device snapshot, command reference, keyboard shortcuts, and a GitHub-marked link to this repository.
 - **Adaptive Light & Dark Engine**: Curated high-contrast semantic palettes for **Breeze Dark**, **Breeze Light**, and custom KDE themes.
 - **Non-blocking Execution**: Commands run asynchronously via Plasma's job runner with hard timeouts; plasmashell never hangs or freezes.
 
@@ -243,7 +245,7 @@ graph LR
 3. **If Audio Glitches**: Click **Fix** (or run `xm fix`). It retries the Bluetooth link and engages Call mode — usually about 7 seconds when the link is healthy, up to a minute if the headset has to be woken.
 4. **Self-Test**: Click **Test** (or run `xm test`) and speak for 5 seconds. The widget switches to Call automatically, the waveform moves with your voice in real time, and the result reports `LIVE` / `QUIET` / `SILENT` with peak dBFS.
 5. **If the Link Is Dead**: Click **Reconnect** (or run `xm reconnect`) to reset the Bluetooth link without forcing a profile change.
-6. **Info & Safe Rollback**: Click the **ⓘ** button for the device snapshot, command reference, shortcuts, and rollback command.
+6. **Info & Safe Rollback**: Click the **ⓘ** button (About) for the device snapshot, command reference, shortcuts, a GitHub-marked repository link, and the rollback command.
 
 ---
 
@@ -349,6 +351,7 @@ The live-waveform, profile-switch and generic-headset contracts have
 headset-free regression tests using fake `pactl`/`parec`/`bluetoothctl` binaries:
 
 ```bash
+./tests/test-widget-icons.sh
 ./tests/test-generic-headset.sh
 ./tests/test-profile-switch.sh
 ./tests/test-live-waveform.sh
@@ -359,7 +362,9 @@ They prove that Call/Music return as soon as the profile is active, that cards
 offering only the mandatory CVSD/SBC profiles still switch, that a non-Sony
 audio device is detected without relying on model names, and that
 `xm test --live-file` publishes real levels during recording, with the final
-JSON still containing 50 bars. The configuration test keeps `main.xml`,
+JSON still containing 50 bars. The icon test pins the semantic icon map, the
+state-aware panel glyph, the About GitHub mark, and the live-audio layout
+contract. The configuration test keeps `main.xml`,
 the `cfg_<key>` aliases in the config page, and every `readCfg()` lookup in
 sync, so a setting can never silently stop saving. Screenshots and the demo GIF
 are rendered from the real QML with:
