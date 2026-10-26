@@ -108,6 +108,22 @@ if "color: root.stateColor" not in recovery:
 if "color: root.colorBusy" in recovery:
     errors.append("recovery card must not use the busy colour")
 
+chip_path = ui_dir / "Chip.qml"
+if not chip_path.is_file():
+    raise SystemExit(f"FAIL: missing {chip_path}")
+chip = chip_path.read_text(encoding="utf-8")
+for token in ("property string text", "property string iconName",
+              "property color tint", "property bool filled"):
+    if token not in chip:
+        errors.append(f"Chip.qml must define {token}")
+
+if "readonly property string batteryIcon" not in popup:
+    errors.append("HeadsetPopup must define batteryIcon")
+if "iconName: root.batteryIcon" not in popup:
+    errors.append("battery chip must use batteryIcon")
+if "Chip {" not in popup:
+    errors.append("header must use the shared Chip component")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}", file=sys.stderr)

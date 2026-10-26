@@ -91,6 +91,22 @@ Item {
         }
     }
 
+    readonly property string batteryIcon: {
+        if (!hasBattery) return ""
+        var step = Math.max(0, Math.min(100, Math.floor(battery / 10) * 10))
+        return "battery-" + (step < 100 ? ("00" + step).slice(-3) : "100") + "-symbolic"
+    }
+
+    readonly property string profileChipText: {
+        var suffix = codec.length > 0 ? " · " + codec : ""
+        switch (state) {
+            case "hfp":  return "Call" + suffix
+            case "a2dp": return "Music" + suffix
+            case "off":  return "Standby"
+            default:     return ""
+        }
+    }
+
     readonly property bool connected: state === "a2dp" || state === "hfp" || state === "off"
     readonly property bool canAct:    !busy && !testing
     readonly property bool canSwitch: connected && canAct
@@ -188,135 +204,57 @@ Item {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing * 1.6
 
-            Item {
-                Layout.preferredWidth:  Kirigami.Units.gridUnit * 2.6
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 2.6
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: width / 2
-                    color: Qt.rgba(root.stateColor.r, root.stateColor.g,
-                                   root.stateColor.b, root.isDark ? 0.20 : 0.13)
-                    border.width: 1
-                    border.color: Qt.rgba(root.stateColor.r, root.stateColor.g,
-                                          root.stateColor.b, 0.42)
-                    Behavior on color        { ColorAnimation { duration: 180 } }
-                    Behavior on border.color { ColorAnimation { duration: 180 } }
-                }
+            Rectangle {
+                Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.9
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.9
+                radius: Kirigami.Units.smallSpacing * 1.2
+                color: Qt.rgba(root.stateColor.r, root.stateColor.g,
+                               root.stateColor.b, root.isDark ? 0.20 : 0.13)
+                border.width: 1
+                border.color: Qt.rgba(root.stateColor.r, root.stateColor.g,
+                                      root.stateColor.b, 0.42)
+                Behavior on color        { ColorAnimation { duration: 180 } }
+                Behavior on border.color { ColorAnimation { duration: 180 } }
 
                 Kirigami.Icon {
                     anchors.centerIn: parent
-                    width:  Kirigami.Units.iconSizes.medium
-                    height: Kirigami.Units.iconSizes.medium
+                    width: 18
+                    height: 18
                     source: root.headerIcon
                     color: root.stateColor
                     opacity: root.busy && !root.testing ? 0.45 : 1.0
                     Behavior on color   { ColorAnimation  { duration: 180 } }
                     Behavior on opacity { NumberAnimation { duration: 180 } }
                 }
-
-                Rectangle {
-                    width: 10
-                    height: 10
-                    radius: width / 2
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.rightMargin: 1
-                    anchors.bottomMargin: 1
-                    color: root.stateColor
-                    border.width: 2
-                    border.color: Kirigami.Theme.backgroundColor
-                    Behavior on color { ColorAnimation { duration: 180 } }
-                }
             }
 
-            ColumnLayout {
+            PlasmaComponents3.Label {
                 Layout.fillWidth: true
-                spacing: 1
+                text: root.deviceName
+                font.bold: true
+                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
+                elide: Text.ElideRight
+                Accessible.name: root.deviceName + ". " + root.stateText
+            }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing
+            Chip {
+                visible: root.showText && text.length > 0
+                text: root.profileChipText
+                tint: root.stateColor
+                filled: true
+            }
 
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        text: root.deviceName
-                        font.bold: true
-                        font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
-                        elide: Text.ElideRight
-                    }
+            Chip {
+                visible: root.hasBattery
+                text: root.battery + "%"
+                iconName: root.batteryIcon
+            }
 
-                    PlasmaComponents3.BusyIndicator {
-                        visible: root.busy && !root.testing
-                        running: visible
-                        Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.1
-                        Layout.preferredHeight: Kirigami.Units.gridUnit * 1.1
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: Kirigami.Units.smallSpacing * 0.9
-
-                    Rectangle {
-                        width: 7
-                        height: 7
-                        radius: width / 2
-                        color: root.stateColor
-                        Behavior on color { ColorAnimation { duration: 180 } }
-                    }
-
-                    PlasmaComponents3.Label {
-                        Layout.fillWidth: true
-                        visible: root.showText
-                        text: root.stateText
-                        font: Kirigami.Theme.smallFont
-                        opacity: 0.72
-                        elide: Text.ElideRight
-                    }
-
-                    Rectangle {
-                        visible: root.codec.length > 0
-                        Layout.preferredWidth: codecLabel.implicitWidth
-                                              + Kirigami.Units.smallSpacing * 1.8
-                        Layout.preferredHeight: Kirigami.Units.gridUnit * 1.25
-                        radius: height / 2
-                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                       Kirigami.Theme.textColor.b, root.isDark ? 0.12 : 0.07)
-                        border.width: 1
-                        border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                              Kirigami.Theme.textColor.b, 0.14)
-
-                        PlasmaComponents3.Label {
-                            id: codecLabel
-                            anchors.centerIn: parent
-                            text: root.codec
-                            font: Kirigami.Theme.smallFont
-                            opacity: 0.8
-                        }
-                    }
-
-                    Rectangle {
-                        visible: root.hasBattery
-                        Layout.preferredWidth: batteryLabel.implicitWidth
-                                              + Kirigami.Units.smallSpacing * 2.2
-                        Layout.preferredHeight: Kirigami.Units.gridUnit * 1.25
-                        radius: height / 2
-                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                       Kirigami.Theme.textColor.b, root.isDark ? 0.12 : 0.07)
-                        border.width: 1
-                        border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                                              Kirigami.Theme.textColor.b, 0.14)
-
-                        PlasmaComponents3.Label {
-                            id: batteryLabel
-                            anchors.centerIn: parent
-                            text: root.battery + "%"
-                            font: Kirigami.Theme.smallFont
-                            opacity: 0.8
-                        }
-                    }
-                }
+            PlasmaComponents3.BusyIndicator {
+                visible: root.busy && !root.testing
+                running: visible
+                Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.1
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.1
             }
 
             PlasmaComponents3.ToolButton {
