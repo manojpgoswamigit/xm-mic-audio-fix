@@ -163,6 +163,7 @@ PlasmoidItem {
     readonly property color colorErr:  isDark ? "#e0553e" : "#c92a2a"
 
     readonly property color stateColor: {
+        if (busy) return colorBusy
         switch (headsetState) {
             case "a2dp":  return colorA2dp
             case "hfp":   return colorHfp
@@ -203,6 +204,7 @@ PlasmoidItem {
     }
 
     readonly property string statusLine: {
+        if (busy) return "Working…"
         switch (headsetState) {
             case "a2dp":  return "Music profile (A2DP), no microphone"
             case "hfp":   return "Call profile (HFP), mic + speaker ready"
@@ -259,15 +261,18 @@ PlasmoidItem {
 
         Layout.minimumWidth:  Kirigami.Units.gridUnit * 20
         Layout.preferredWidth: Kirigami.Units.gridUnit * 22
-        Layout.minimumHeight: Kirigami.Units.gridUnit * 26
-        Layout.preferredHeight: Kirigami.Units.gridUnit * 28
+        Layout.minimumHeight: headsetPopup.overlayVisible
+            ? Kirigami.Units.gridUnit * 28 : headsetPopup.implicitHeight
+        Layout.preferredHeight: Layout.minimumHeight
 
         Kirigami.Theme.colorSet: Kirigami.Theme.View
 
         HeadsetPopup {
+            id: headsetPopup
             anchors.fill: parent
             state:         root.headsetState
             busy:          root.busy
+            connectionAction: root.pending ? root.pending.label : ""
             testing:       root.testing
             countdown:     root.testCountdown
             message:       root.message
@@ -282,6 +287,7 @@ PlasmoidItem {
             onCallRequested:      root.doCall()
             onMusicRequested:     root.doMusic()
             onTestRequested:      root.doTest()
+            onConnectionRequested: root.doConnection()
             onReconnectRequested: root.doReset()
             onFixRequested:       root.doFix()
             onRestoreRequested:   root.doRestoreDefaults()
@@ -565,7 +571,7 @@ PlasmoidItem {
         if (!isBackground) {
             if (!opts.quiet) {
                 busy = true
-                headsetState = "busy"
+                // Keep the current device and controls visible while working.
             }
             actionTimeoutTimer.restart()
         } else {
@@ -769,6 +775,21 @@ PlasmoidItem {
             testing = false
             testCountdownTimer.stop()
             stopLiveMeter()
+            setMessage("Still running the previous command.")
+        }
+    }
+
+    function doConnection() {
+        if (!ableToRun || (headsetState !== "none" && !connected)) return
+        var action = connected ? "disconnect" : "connect"
+        testResult = null
+        setMessage(action === "connect" ? "Connecting the headset…" : "Disconnecting the headset…")
+        if (!run(action, action, false, function (out, code, exitStatus, err) {
+            setMessage(code === 0
+                ? (action === "connect" ? "Headset connected." : "Headset disconnected.")
+                : (String(err).trim() || String(out).trim() || "Could not " + action + " the headset. Check Bluetooth and headset power."))
+            root.refreshInfo()
+        })) {
             setMessage("Still running the previous command.")
         }
     }

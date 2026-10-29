@@ -28,7 +28,7 @@ render() {
     echo "rendering $theme/$state -> $out_dir/$name.png"
     QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=KDE \
         qml6 preview/preview.qml -- "${theme_arg[@]}" \
-        "--state=$state" --scale=2 --out="$out_dir/$name.png" >/dev/null
+        "--state=$state" --auto-height --scale=2 --out="$out_dir/$name.png" >/dev/null
 }
 
 render a2dp  light screenshot-light
@@ -43,7 +43,7 @@ cp "$out_dir/screenshot-dark.png" "$out_dir/widget-screenshot.png"
 for frame in hfp testing live about a2dp; do
     echo "rendering demo frame $frame"
     QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=KDE \
-        qml6 preview/preview.qml -- dark "--state=$frame" --scale=2 \
+        qml6 preview/preview.qml -- dark "--state=$frame" --height=505 --scale=2 \
         --out="$tmp_dir/gif-$frame.png" >/dev/null
 done
 

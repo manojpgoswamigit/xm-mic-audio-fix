@@ -136,8 +136,8 @@ if '"−"' not in mic_panel:
 
 mic_at = popup.find("MicTestPanel {")
 card_at = popup.find("ProfileCard {")
-if mic_at < 0 or card_at < 0 or mic_at > card_at:
-    errors.append("the mic hero must appear above the profile cards")
+if mic_at < 0 or card_at < 0 or card_at > mic_at:
+    errors.append("the primary profile cards must appear above the mic test")
 
 restore = block('id: restoreButton', 1400)
 if restore.count('"edit-reset-symbolic"') < 2:
