@@ -99,8 +99,22 @@ first if the headset is in Music mode, so the test cannot fail just because of
 the current profile.
 
 Keyboard shortcuts while the popup is focused: <kbd>C</kbd> Call,
-<kbd>M</kbd> Music, <kbd>T</kbd> Test, <kbd>R</kbd> Reconnect,
+<kbd>M</kbd> Music, <kbd>T</kbd> Test, <kbd>D</kbd> Connect/disconnect · <kbd>R</kbd> Reconnect,
 <kbd>F</kbd> Fix, <kbd>Esc</kbd> close About/confirmation.
+
+The compact **Connect / Disconnect** header button controls the Bluetooth link while keeping
+headphones paired. It uses the same theme-aware button style as the recovery
+controls and disables during another action or a mic test. Press **D** to toggle.
+The CLI equivalents are `xm connect`, `xm disconnect`, and `xm toggle`.
+Connection commands verify the resulting Bluetooth state; an already connected
+headset is left connected without resetting its link. Like the existing recovery
+commands, detection handles one headset at a time and falls back to the first
+known audio device when none is connected.
+
+The popup sizes itself to its content: Call/Music are the primary actions,
+the idle microphone check is compact, and recording/results expand the waveform.
+The header keeps device identity and connection progress visible during commands.
+Run `./tests/test-widget-ui.sh` for real Qt interaction and narrow-layout probes.
 
 ## Configuration
 

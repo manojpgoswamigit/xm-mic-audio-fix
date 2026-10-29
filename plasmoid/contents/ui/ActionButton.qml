@@ -17,6 +17,7 @@ import org.kde.plasma.components as PlasmaComponents3
 PlasmaComponents3.Button {
     id: button
 
+    property color foregroundColor: Kirigami.Theme.textColor
     property bool  primary: false
     property color accentColor: Kirigami.Theme.highlightColor
 
@@ -29,6 +30,7 @@ PlasmaComponents3.Button {
     topPadding:   0
     bottomPadding: 0
     hoverEnabled: true
+    activeFocusOnTab: true
 
     readonly property bool isDark: (Kirigami.Theme.textColor.r * 0.299
                                   + Kirigami.Theme.textColor.g * 0.587
@@ -49,9 +51,9 @@ PlasmaComponents3.Button {
         border.width: 1
         border.color: button.primary
             ? Qt.rgba(button.accentColor.r, button.accentColor.g,
-                      button.accentColor.b, button.hovered ? 0.62 : 0.42)
+                      button.accentColor.b, button.activeFocus ? 1.0 : (button.hovered ? 0.62 : 0.42))
             : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
-                      Kirigami.Theme.textColor.b, button.hovered ? 0.26 : 0.14)
+                      Kirigami.Theme.textColor.b, button.activeFocus ? 0.8 : (button.hovered ? 0.26 : 0.14))
 
         Behavior on color        { ColorAnimation { duration: 130 } }
         Behavior on border.color { ColorAnimation { duration: 130 } }
@@ -65,20 +67,20 @@ PlasmaComponents3.Button {
             Layout.preferredWidth:  Kirigami.Units.iconSizes.small
             Layout.preferredHeight: Kirigami.Units.iconSizes.small
             source: button.icon.name
-            color: button.primary ? button.accentColor : Kirigami.Theme.textColor
-            opacity: button.enabled ? 0.95 : 0.5
+            color: button.primary ? button.accentColor : button.foregroundColor
+            opacity: 0.95
         }
 
         PlasmaComponents3.Label {
             Layout.fillWidth: true
             text: button.text
             font: Kirigami.Theme.defaultFont
-            color: button.primary ? button.accentColor : Kirigami.Theme.textColor
+            color: button.primary ? button.accentColor : button.foregroundColor
             horizontalAlignment: Text.AlignHCenter
             elide: Text.ElideRight
-            opacity: button.enabled ? 1.0 : 0.55
+            opacity: 1.0
         }
     }
 
-    opacity: enabled ? 1.0 : 0.5
+    opacity: enabled ? 1.0 : 0.7
 }

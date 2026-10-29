@@ -32,6 +32,7 @@ Item {
 
     // ---- state -----------------------------------------------------------
     property string state:        "loading"   // loading|a2dp|hfp|off|none|error|busy
+    property string connectionAction: ""
     property bool   busy:         false
     property bool   testing:      false
     property int    countdown:    5
@@ -48,6 +49,7 @@ Item {
     signal callRequested()
     signal musicRequested()
     signal testRequested()
+    signal connectionRequested()
     signal reconnectRequested()
     signal fixRequested()
     signal restoreRequested()
@@ -65,13 +67,15 @@ Item {
     // the system button palette (which can differ from an embedded/popup theme).
     readonly property color fgColor: Kirigami.Theme.textColor
 
-    readonly property color colorA2dp: Kirigami.Theme.highlightColor
+    readonly property color colorA2dp: isDark ? Kirigami.Theme.highlightColor
+        : Qt.darker(Kirigami.Theme.highlightColor, 1.4)
     readonly property color colorHfp:  isDark ? "#2cd483" : "#178a4c"
     readonly property color colorOff:  isDark ? "#9aa0a6" : "#59636e"
     readonly property color colorBusy: isDark ? "#e8a33d" : "#a85a00"
     readonly property color colorErr:  isDark ? "#e0553e" : "#c92a2a"
 
     readonly property color stateColor: {
+        if (busy) return colorBusy
         switch (state) {
             case "a2dp":  return colorA2dp
             case "hfp":   return colorHfp
@@ -109,6 +113,7 @@ Item {
 
     readonly property bool connected: state === "a2dp" || state === "hfp" || state === "off"
     readonly property bool canAct:    !busy && !testing
+    readonly property bool canConnect: canAct && (connected || state === "none")
     readonly property bool canSwitch: connected && canAct
     readonly property bool showProfiles: connected
 
@@ -145,11 +150,18 @@ Item {
         { cmd: "xm call",            desc: "HFP: microphone + speaker" },
         { cmd: "xm music",           desc: "A2DP: hi-fi output, no mic" },
         { cmd: "xm test",            desc: "5 second microphone check" },
+        { cmd: "xm toggle",          desc: "Connect or disconnect the headset" },
         { cmd: "xm reconnect",       desc: "Reset a dead Bluetooth link" },
         { cmd: "xm fix",             desc: "Reconnect, then switch to Call" },
         { cmd: "xm doctor",          desc: "Diagnose the audio stack" },
         { cmd: "xm defaults-reset",  desc: "Hand control back to WirePlumber" }
     ]
+
+    Shortcut {
+        sequence: "D"
+        enabled: root.canConnect && !root.overlayVisible
+        onActivated: root.connectionRequested()
+    }
 
     // ---- keyboard shortcuts ---------------------------------------------
     Shortcut {
@@ -189,10 +201,13 @@ Item {
         onActivated: root.fixRequested()
     }
 
+    implicitHeight: mainColumn.implicitHeight + Kirigami.Units.largeSpacing * 2
+
     // =========================================================================
     //  Main view
     // =========================================================================
     ColumnLayout {
+        id: mainColumn
         anchors.fill: parent
         anchors.leftMargin:   Kirigami.Units.largeSpacing
         anchors.rightMargin:  Kirigami.Units.largeSpacing
@@ -223,39 +238,76 @@ Item {
                     height: 18
                     source: root.headerIcon
                     color: root.stateColor
-                    opacity: root.busy && !root.testing ? 0.45 : 1.0
+                    visible: !root.busy
+                    opacity: 1.0
                     Behavior on color   { ColorAnimation  { duration: 180 } }
                     Behavior on opacity { NumberAnimation { duration: 180 } }
                 }
+                PlasmaComponents3.BusyIndicator {
+                    anchors.centerIn: parent
+                    width: Kirigami.Units.iconSizes.smallMedium
+                    height: width
+                    visible: root.busy
+                    running: visible
+                }
             }
 
-            PlasmaComponents3.Label {
+            ColumnLayout {
                 Layout.fillWidth: true
-                text: root.deviceName
-                font.bold: true
-                font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
-                elide: Text.ElideRight
-                Accessible.name: root.deviceName + ". " + root.stateText
+                spacing: Kirigami.Units.smallSpacing
+
+                PlasmaComponents3.Label {
+                    objectName: "deviceNameLabel"
+                    Layout.fillWidth: true
+                    text: root.deviceName
+                    font.bold: true
+                    font.pointSize: Kirigami.Theme.defaultFont.pointSize + 1
+                    elide: Text.ElideRight
+                    Accessible.name: root.deviceName + ". " + root.stateText
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.smallSpacing
+                    Chip {
+                        visible: root.showText && text.length > 0
+                        text: root.profileChipText
+                        tint: root.stateColor
+                        filled: true
+                    }
+                    Chip {
+                        visible: root.hasBattery
+                        text: root.battery + "%"
+                        iconName: root.batteryIcon
+                    }
+                    PlasmaComponents3.Label {
+                        visible: !root.connected
+                        text: root.busy ? "Working…" : root.stateText
+                        font: Kirigami.Theme.smallFont
+                        opacity: 0.7
+                        Layout.fillWidth: true
+                        elide: Text.ElideRight
+                    }
+                }
             }
 
-            Chip {
-                visible: root.showText && text.length > 0
-                text: root.profileChipText
-                tint: root.stateColor
-                filled: true
-            }
-
-            Chip {
-                visible: root.hasBattery
-                text: root.battery + "%"
-                iconName: root.batteryIcon
-            }
-
-            PlasmaComponents3.BusyIndicator {
-                visible: root.busy && !root.testing
-                running: visible
-                Layout.preferredWidth:  Kirigami.Units.gridUnit * 1.1
-                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.1
+            ActionButton {
+                objectName: "connectionButton"
+                foregroundColor: root.fgColor
+                text: root.busy && root.connectionAction === "connect" ? "Connecting…"
+                    : root.busy && root.connectionAction === "disconnect" ? "Disconnecting…"
+                    : root.connected ? "Disconnect" : "Connect"
+                implicitHeight: Kirigami.Units.gridUnit * 2
+                primary: !root.connected
+                accentColor: root.colorA2dp
+                enabled: root.canConnect
+                onClicked: root.connectionRequested()
+                PlasmaComponents3.ToolTip {
+                    text: root.connected
+                        ? "Disconnect the headset and keep it paired (D)"
+                        : "Connect your paired headset (D)"
+                    visible: parent.hovered
+                }
             }
 
             PlasmaComponents3.ToolButton {
@@ -354,7 +406,7 @@ Item {
                     PlasmaComponents3.Label {
                         Layout.fillWidth: true
                         text: root.state === "none"
-                            ? "Turn the headset on (or wake it), then reconnect."
+                            ? "Turn on your paired headset, then choose Connect."
                             : "Reconnect to rebuild the link, or run xm doctor."
                         font: Kirigami.Theme.smallFont
                         opacity: 0.65
@@ -363,27 +415,13 @@ Item {
                 }
 
                 ActionButton {
+                    visible: root.state === "error"
                     text: "Reconnect"
                     icon.name: "view-refresh-symbolic"
-                    primary: true
-                    accentColor: root.stateColor
                     enabled: root.canAct
                     onClicked: root.reconnectRequested()
                 }
             }
-        }
-
-        // ---- microphone test --------------------------------------------
-        MicTestPanel {
-            Layout.fillWidth: true
-            visible: root.connected
-            testing: root.testing
-            countdown: root.countdown
-            result: root.testResult
-            liveLevels: root.liveLevels
-            profileState: root.state
-            accentColor: root.stateColor
-            onTestRequested: root.testRequested()
         }
 
         // ---- profile cards ----------------------------------------------
@@ -395,6 +433,7 @@ Item {
 
             ProfileCard {
                 objectName: "callButton"
+                Layout.preferredWidth: 1
                 Layout.fillWidth: true
                 cardTitle: "Call"
                 cardSubtitle: "Mic + speaker"
@@ -408,6 +447,7 @@ Item {
 
             ProfileCard {
                 objectName: "musicButton"
+                Layout.preferredWidth: 1
                 Layout.fillWidth: true
                 cardTitle: "Music"
                 cardSubtitle: "Hi-fi, no mic"
@@ -418,6 +458,21 @@ Item {
                 tooltipText: "Switch to A2DP hi-fi output (M)"
                 onClicked: root.musicRequested()
             }
+        }
+
+        // ---- microphone test --------------------------------------------
+        MicTestPanel {
+            objectName: "micPanel"
+            enabled: !root.busy
+            Layout.fillWidth: true
+            visible: root.connected
+            testing: root.testing
+            countdown: root.countdown
+            result: root.testResult
+            liveLevels: root.liveLevels
+            profileState: root.state
+            accentColor: root.stateColor
+            onTestRequested: root.testRequested()
         }
 
         // ---- maintenance -------------------------------------------------
@@ -508,11 +563,13 @@ Item {
             Kirigami.Icon {
                 Layout.preferredWidth:  Kirigami.Units.iconSizes.small
                 Layout.preferredHeight: Kirigami.Units.iconSizes.small
+                visible: root.width >= 400
                 source: "utilities-terminal-symbolic"
                 opacity: 0.45
             }
 
             PlasmaComponents3.Label {
+                visible: root.width >= 400
                 text: "via xm"
                 opacity: 0.45
                 font: Kirigami.Theme.smallFont
@@ -521,7 +578,7 @@ Item {
             PlasmaComponents3.ToolButton {
                 id: authorButton
                 Kirigami.Theme.inherit: true
-                text: "Manoj Goswami"
+                text: root.width >= 400 ? "Manoj Goswami" : ""
                 icon.name: "user-identity-symbolic"
                 display: PlasmaComponents3.AbstractButton.TextBesideIcon
                 font: Kirigami.Theme.smallFont
@@ -734,7 +791,7 @@ Item {
 
                         PlasmaComponents3.Label {
                             Layout.fillWidth: true
-                            text: "Shortcuts: C Call · M Music · T Test · R Reconnect · F Fix"
+                            text: "Shortcuts: C Call · M Music · T Test · D Connect/disconnect · R Reconnect · F Fix"
                             font: Kirigami.Theme.smallFont
                             opacity: 0.5
                             wrapMode: Text.WordWrap
