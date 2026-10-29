@@ -127,11 +127,13 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
 </p>
 
 #### ✨ Key Features
-- **Device-aware header**: a state-tinted headset tile, the headset name, a profile chip with the active codec (`LDAC`, `AAC`, `mSBC`), a battery chip with its level glyph, and a busy spinner while a command runs.
+- **Device-aware header**: a state-tinted headset tile, a device name above the status chips, compact Connect/Disconnect control, a profile chip with the active codec (`LDAC`, `AAC`, `mSBC`), a battery chip with its level glyph, and a busy spinner while a command runs.
 - **Compact profile cards**: **Call** and **Music** targets with an icon, title, subtitle, an active check badge, hover feedback, and accent borders.
+- **Compact idle layout**: Call/Music stay first, the mic panel expands when testing or showing results, and connection progress keeps the current controls in place.
 - **Live microphone test**: one click switches to Call if needed, records 5 seconds, and fills a **50-bar waveform from real 100 ms samples as you speak** with `LIVE` / `QUIET` / `SILENT`, peak dBFS and duration.
+- **Connection toggle**: a theme-aware **Connect / Disconnect** header button keeps the headset paired; press <kbd>D</kbd> to toggle.
 - **Connection recovery**: **Reconnect** retries the Bluetooth link up to three times, waits for the audio card and its profiles, and verifies the link before reporting success. **Fix** = Reconnect + Call.
-- **Keyboard shortcuts**: <kbd>C</kbd> Call · <kbd>M</kbd> Music · <kbd>T</kbd> Test · <kbd>R</kbd> Reconnect · <kbd>F</kbd> Fix · <kbd>Esc</kbd> close About/confirmation.
+- **Keyboard shortcuts**: <kbd>C</kbd> Call · <kbd>M</kbd> Music · <kbd>T</kbd> Test · <kbd>D</kbd> Connect/disconnect · <kbd>R</kbd> Reconnect · <kbd>F</kbd> Fix · <kbd>Esc</kbd> close About/confirmation.
 - **Color-Coded Panel Tray Icon**:
   - 🟢 **Green**: Call mode (HFP active, mic and speaker ready for meetings).
   - 🔵 **Blue / Accent**: Music mode (A2DP hi-fi audio).
@@ -184,6 +186,9 @@ xm music       # Switch to A2DP (hi-fi output) after a meeting
 | `xm test` | Records 5s sample and rates quality | Quick mic self-check (`LIVE` / `QUIET` / `SILENT`) |
 | `xm test --json` | Same test with peak dBFS + 50-bar levels | Widgets, scripts, visualisations |
 | `xm test --json --live-file PATH` | Streams each 100 ms level to `PATH` while recording | Widget live waveform (internal) |
+| `xm connect` | Connects the known headset without resetting an active link | Headset is paired and powered on |
+| `xm disconnect` | Disconnects the headset and keeps it paired | Stop using headphone audio |
+| `xm toggle` | Connects if disconnected, disconnects if connected | Keyboard shortcuts and scripts |
 | `xm reset` | Reconnects headset to clear stalled link | Mic shows connected but produces no audio |
 | `xm reconnect` | Alias for `reset`, with up to 3 link attempts | Same as above, explicit name |
 | `xm fix` | Runs `reconnect` followed by `call` | Pre-meeting one-shot rescue |
@@ -351,6 +356,8 @@ The live-waveform, profile-switch and generic-headset contracts have
 headset-free regression tests using fake `pactl`/`parec`/`bluetoothctl` binaries:
 
 ```bash
+bash tests/test-connection.sh
+./tests/test-widget-ui.sh  # requires Qt 6 Quick Test and Plasma QML modules
 ./tests/test-widget-icons.sh
 ./tests/test-generic-headset.sh
 ./tests/test-profile-switch.sh

@@ -133,7 +133,7 @@ Rectangle {
         return out.slice(Math.max(0, out.length - 50))
     }
 
-    implicitHeight: Kirigami.Units.gridUnit * 9.8
+    implicitHeight: Kirigami.Units.gridUnit * (hasResult || testing ? 9.8 : 4.6)
     radius: Kirigami.Units.smallSpacing * 1.8
     color: Qt.rgba(verdictColor.r, verdictColor.g, verdictColor.b,
                    hasResult || testing ? (isDark ? 0.10 : 0.07) : 0.045)
@@ -155,6 +155,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             spacing: Kirigami.Units.smallSpacing * 1.2
+            visible: panel.testing || panel.hasResult
 
             PlasmaComponents3.Label {
                 text: "MIC INPUT"
@@ -186,6 +187,7 @@ Rectangle {
         RowLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
+            visible: panel.testing || panel.hasResult
             spacing: Kirigami.Units.smallSpacing * 1.5
 
             ColumnLayout {
@@ -265,6 +267,7 @@ Rectangle {
         // ---- verdict / action --------------------------------------------
         RowLayout {
             Layout.fillWidth: true
+            Layout.fillHeight: !panel.hasResult && !panel.testing
             spacing: Kirigami.Units.smallSpacing
 
             Kirigami.Icon {
@@ -291,7 +294,7 @@ Rectangle {
                     text: panel.subtitle
                     font: Kirigami.Theme.smallFont
                     opacity: 0.65
-                    elide: Text.ElideRight
+                    wrapMode: Text.WordWrap
                 }
             }
 

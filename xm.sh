@@ -519,6 +519,44 @@ PY
 # ------------------------------------------------------------------------------
 # Reconnect / link recovery
 # ------------------------------------------------------------------------------
+# Connection controls do not reset a healthy link or change audio profiles.
+set_connection() {
+    require bluetoothctl
+    local action="$1" mac conn wanted i
+    mac=$(find_mac 1)
+    if [ -z "$mac" ]; then
+        echo "No known Bluetooth headset found. Pair your headset first." >&2
+        return 1
+    fi
+    conn=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null | awk '/Connected:/{print $2; exit}' || true)
+    if [ "$action" = toggle ]; then
+        case "$conn" in
+            yes) action=disconnect ;;
+            no)  action=connect ;;
+            *) echo "Could not read the headset connection state." >&2; return 1 ;;
+        esac
+    fi
+    if [ "$action" = connect ]; then wanted=yes; else wanted=no; fi
+    if [ "$conn" = "$wanted" ]; then
+        echo "Headset already ${action}ed."
+        return 0
+    fi
+    if ! timeout 12 bluetoothctl "$action" "$mac"; then
+        echo "Could not $action the headset. Check Bluetooth, headset power and range." >&2
+        return 1
+    fi
+    for i in {1..10}; do
+        conn=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null | awk '/Connected:/{print $2; exit}' || true)
+        if [ "$conn" = "$wanted" ]; then
+            echo "Headset ${action}ed."
+            return 0
+        fi
+        sleep 0.3
+    done
+    echo "Could not confirm the headset is ${action}ed." >&2
+    return 1
+}
+
 reconnect() {
     require bluetoothctl pactl
 
@@ -767,6 +805,9 @@ Usage: $APP_NAME <command> [--json]
   info      Show device, codec, mic and config details (add --json for machines)
   test      Record 5s from the mic and report LIVE / QUIET / SILENT (talk during it)
            (add --json for the verdict and a 50-bar level waveform)
+  connect   Connect the known headset without resetting its link
+  disconnect Disconnect the headset (keep it paired)
+  toggle    Toggle the headset Bluetooth connection
   reset     Reconnect the headset to clear a dead/silent mic link
   reconnect Alias for reset
   fix       reconnect + switch to 'call' profile in one shot (pre-meeting one-liner)
@@ -792,6 +833,9 @@ if [ "$cmd" = "status" ] && [ "${2:-}" = "--machine" ]; then
 fi
 
 case "$cmd" in
+    connect|disconnect|toggle)
+        set_connection "$cmd"
+        ;;
     call)
         require pactl bluetoothctl
         set_profile headset-head-unit

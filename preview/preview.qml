@@ -35,6 +35,10 @@ Window {
     property bool dark: hasArg("dark")
     property string outPath: argValue("--out=", "/tmp/opencode/xm-preview/sheet.png")
     property string singleState: argValue("--state=", "")
+    property bool autoHeight: hasArg("--auto-height")
+    property real naturalHeight: panelHeight
+    property int panelWidth: Number(argValue("--width=", "420"))
+    property int panelHeight: Number(argValue("--height=", "432"))
     property real grabScale: Math.max(1, Number(argValue("--scale=", "1")) || 1)
 
     function argValue(prefix, fallback) {
@@ -61,8 +65,8 @@ Window {
                     "scale=" + grabScale)
     }
 
-    width: singleState.length > 0 ? 452 : 1340
-    height: singleState.length > 0 ? 537 : 1160
+    width: singleState.length > 0 ? panelWidth + 32 : (panelWidth + 20) * 3 + 20
+    height: singleState.length > 0 ? (autoHeight ? naturalHeight : panelHeight) + 32 : (panelHeight + 65) * 2 + 20
     visible: true
     title: "XM Headset preview"
 
@@ -101,17 +105,19 @@ Window {
                     spacing: 6
 
                     Rectangle {
-                        Layout.preferredWidth: 420
-                        Layout.preferredHeight: 505
+                        Layout.preferredWidth: win.panelWidth
+                        Layout.preferredHeight: win.autoHeight && win.singleState.length > 0 ? win.naturalHeight : win.panelHeight
                         radius: 9
                         color: Kirigami.Theme.backgroundColor
                         border.width: 1
                         border.color: win.dark ? "#394046" : "#c9ccce"
 
                         HeadsetPopup {
+                            onImplicitHeightChanged: if (win.singleState.length > 0) win.naturalHeight = aboutVisible ? 504 : implicitHeight
                             anchors.fill: parent
                             state:          win.previewState(modelData)
-                            busy:           modelData === "busy"
+                            busy:           modelData === "busy" || modelData === "connecting" || modelData === "disconnecting"
+                            connectionAction: modelData === "connecting" ? "connect" : modelData === "disconnecting" ? "disconnect" : "call"
                             testing:        modelData === "testing"
                             countdown:      3
                             message:        win.previewMessage(modelData)
@@ -138,7 +144,12 @@ Window {
     function previewState(name) {
         switch (name) {
             case "a2dp":
+            case "disconnecting":
                 return "a2dp"
+            case "connecting":
+                return "none"
+            case "busy":
+                return "hfp"
             case "hfp":
             case "testing":
             case "live":
@@ -160,7 +171,7 @@ Window {
     }
 
     function previewInfo(name) {
-        if (name === "none") return {}
+        if (name === "none" || name === "connecting") return {device: "WH-1000XM5", connected: false}
         var base = {
             device: "WH-1000XM5",
             mac: "80:99:E7:36:CB:CA",
@@ -168,7 +179,7 @@ Window {
             connected: true,
             wp_config: true
         }
-        if (name === "a2dp") {
+        if (name === "a2dp" || name === "disconnecting") {
             base.state = "a2dp"
             base.profile = "a2dp-sink"
             base.codec = "LDAC"
