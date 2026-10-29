@@ -65,8 +65,8 @@ PlasmaComponents3.Button {
             return Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
                            Kirigami.Theme.textColor.b, card.isDark ? 0.05 : 0.035)
         }
-        border.width: card.isActive ? 2 : 1
-        border.color: card.isActive
+        border.width: card.isActive || card.activeFocus ? 2 : 1
+        border.color: card.isActive || card.activeFocus
             ? card.accentColor
             : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
                       Kirigami.Theme.textColor.b, card.hovered ? 0.26 : 0.12)
