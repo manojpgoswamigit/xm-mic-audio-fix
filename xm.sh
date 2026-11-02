@@ -63,12 +63,26 @@ json_str() {
 # ------------------------------------------------------------------------------
 # Helpers - all auto-detect the connected Bluetooth headset card / MAC
 # ------------------------------------------------------------------------------
+# True when a standalone PulseAudio daemon is running or answering pactl
+# (e.g. pulled in as a dependency, replacing pipewire-pulse). It owns no bluez
+# cards and shares the socket with PipeWire, so profile switches fail at random.
+pulseaudio_conflict() {
+    pidof -q pulseaudio && return 0
+    ! timeout 3 pactl info 2>/dev/null | grep -q '^Server Name:.*PipeWire'
+}
+
+PULSE_HINT="PulseAudio is answering instead of PipeWire. Run: sudo pacman -S pipewire-pulse (accept removing pulseaudio), then log out and back in."
+
 find_card() {
     have pactl || return 1
     local c
     c=$(timeout 3 pactl list cards short 2>/dev/null | awk '/bluez_card/{print $2; exit}' || true)
     if [ -z "$c" ]; then
-        echo "No Bluetooth audio card found. Is your headset connected?" >&2
+        if pulseaudio_conflict; then
+            echo "No Bluetooth audio card found. $PULSE_HINT" >&2
+        else
+            echo "No Bluetooth audio card found. Is your headset connected?" >&2
+        fi
         return 1
     fi
     printf '%s\n' "$c"
@@ -704,6 +718,9 @@ run_doctor() {
     done
     if pactl info >/dev/null 2>&1; then
         pass "PulseAudio/PipeWire server reachable"
+        if pulseaudio_conflict; then
+            fail "standalone PulseAudio is running. $PULSE_HINT"
+        fi
     else
         fail "cannot reach the PipeWire/PulseAudio server"
     fi
