@@ -5,13 +5,13 @@
 //  This is how the widget screenshots and every visual iteration are produced.
 //
 //  Usage (from the repo root):
-//    mkdir -p /tmp/opencode/xm-preview
+//    mkdir -p /tmp/xm-preview
 //    QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=KDE \
-//      qml6 preview/preview.qml -- --out=/tmp/opencode/xm-preview/sheet.png
+//      qml6 preview/preview.qml -- --out=/tmp/xm-preview/sheet.png
 //    QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=KDE \
-//      qml6 preview/preview.qml -- dark --out=/tmp/opencode/xm-preview/sheet-dark.png
+//      qml6 preview/preview.qml -- dark --out=/tmp/xm-preview/sheet-dark.png
 //    QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=KDE \
-//      qml6 preview/preview.qml -- --state=hfp --out=/tmp/opencode/xm-preview/hfp.png
+//      qml6 preview/preview.qml -- --state=hfp --out=/tmp/xm-preview/hfp.png
 //    ... -- --state=a2dp --scale=2 --out=...     # 2x for crisp README assets
 //
 //  QT_QPA_PLATFORMTHEME=KDE matters: offscreen Qt otherwise has no platform
@@ -33,7 +33,7 @@ Window {
     // Resolve arguments before children are created: theme bindings must see
     // the right dark/light value on their first evaluation.
     property bool dark: hasArg("dark")
-    property string outPath: argValue("--out=", "/tmp/opencode/xm-preview/sheet.png")
+    property string outPath: argValue("--out=", "/tmp/xm-preview/sheet.png")
     property string singleState: argValue("--state=", "")
     property bool autoHeight: hasArg("--auto-height")
     property real naturalHeight: panelHeight

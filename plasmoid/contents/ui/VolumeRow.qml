@@ -205,10 +205,6 @@ Item {
                         visible: row.known
                         color: row.tint
                         Behavior on color { ColorAnimation { duration: 140 } }
-                        Behavior on width {
-                            enabled: !slider.pressed
-                            NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
-                        }
                     }
                 }
 
@@ -219,10 +215,6 @@ Item {
                     height: 16
                     visible: row.known
 
-                    Behavior on x {
-                        enabled: !slider.pressed
-                        NumberAnimation { duration: 110; easing.type: Easing.OutCubic }
-                    }
 
                     // Focus halo
                     Rectangle {

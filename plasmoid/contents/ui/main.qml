@@ -24,8 +24,8 @@
 //      ever owned by plasmashell and nothing is left behind when the applet
 //      is removed.
 //    * Fast polling (`status --machine`, ~15 ms) keeps the panel icon live.
-//      The richer `info --json` (~130 ms) is only fetched when the popup is
-//      open and after an action, so Bluetooth is not woken every 2 seconds.
+//      The richer `info --json` runs at startup, while the popup is open
+//      and after an action.
 // =============================================================================
 
 import QtQuick
@@ -594,7 +594,7 @@ PlasmoidItem {
     // -------------------------------------------------------------------------
     // Status polling
     //   fast:  status --machine every pollMs, keeps the panel icon current
-    //   rich:  info --json only while the popup is open and after an action
+    //   rich:  info --json at startup, while open and after an action
     // -------------------------------------------------------------------------
     Timer {
         id: pollTimer
@@ -616,7 +616,6 @@ PlasmoidItem {
 
     onExpandedChanged: {
         if (root.expanded) {
-            refreshStatus()
             refreshInfo()
         } else {
             // A verdict from a previous meeting is not useful next week.
@@ -628,7 +627,8 @@ PlasmoidItem {
     }
 
     function refreshStatus() {
-        if (busy || testing) {
+        // The richer snapshot also reports state. Let it finish before polling.
+        if (busy || testing || pending !== null) {
             return
         }
         run("status --machine", "status", true, function (out, code) {
@@ -650,7 +650,7 @@ PlasmoidItem {
     }
 
     function refreshInfo() {
-        if (busy || testing) {
+        if (busy || testing || (pending !== null && pending.label === "info")) {
             return
         }
         run("info --json", "info", true, applyInfo)
@@ -727,11 +727,11 @@ PlasmoidItem {
                 root.setMessage(err.length > 0 ? err.split("\n").pop()
                                                : "Could not change the volume.")
             }
-            volumeGapTimer.restart()
+            root.flushVolume()
         }
     }
 
-    // Small gap between commands: lets a drag coalesce into fewer calls.
+    // Limit dispatch frequency while allowing the cooldown to overlap execution.
     Timer {
         id: volumeGapTimer
         interval: 60
@@ -772,13 +772,11 @@ PlasmoidItem {
         volumeQueueOrder = order
         volumeHoldUntil = Date.now() + volumeHoldMs
         volumeSettleTimer.restart()
-        if (volumeSource.length === 0 && !volumeGapTimer.running) {
-            flushVolume()
-        }
+        flushVolume()
     }
 
     function flushVolume() {
-        if (volumeSource.length > 0 || volumeQueueOrder.length === 0) {
+        if (volumeSource.length > 0 || volumeGapTimer.running || volumeQueueOrder.length === 0) {
             return
         }
         var order = volumeQueueOrder.slice()
@@ -791,6 +789,7 @@ PlasmoidItem {
 
         volumeSeq++
         volumeSource = quotePath(xmBin) + " " + argv + " #vol=" + volumeSeq
+        volumeGapTimer.restart()
         volumeTimeoutTimer.restart()
         volumeRunner.connectedSources = [volumeSource]
     }
@@ -1065,8 +1064,5 @@ PlasmoidItem {
         iconName: "xmwidget"
     }
 
-    Component.onCompleted: {
-        refreshStatus()
-        refreshInfo()
-    }
+    Component.onCompleted: refreshInfo()
 }

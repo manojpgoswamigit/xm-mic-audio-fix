@@ -117,6 +117,10 @@ SH
 
 cat > "$tmp/bin/bluetoothctl" <<'SH'
 #!/usr/bin/env bash
+if [ "${1:-}" = info ]; then
+    echo "$2" >> "$FAKE_STATE/bluez-info"
+    printf '  Name: Fixture headset\n  Connected: yes\n  Battery Percentage: 0x50 (80)\n'
+fi
 exit 0
 SH
 cat > "$tmp/bin/busctl" <<'SH'
@@ -187,13 +191,16 @@ expect_rc 1 mic-volume 50
 [ ! -f "$FAKE_STATE/vol.$(key "$OTHER_SRC")" ] || fail "Music: changed the other device's mic"
 
 # ---- info --json in Music -------------------------------------------------
+: > "$FAKE_STATE/bluez-info"
 json=$(xm info --json)
+[ "$(wc -l < "$FAKE_STATE/bluez-info")" -eq 1 ] || fail "info repeats the BlueZ device query"
 python3 - "$json" <<'PY' || fail "info --json (music): $json"
 import json, sys
 o = json.loads(sys.argv[1])
 # mic_volume must stay null although another device has a live mic.
 assert o["speaker_volume"] == 45 and type(o["speaker_volume"]) is int, o
 assert o["speaker_muted"] is False, o
+assert (o["device"], o["connected"], o["battery"]) == ("Fixture headset", True, 80), o
 assert o["mic_volume"] is None and o["mic_muted"] is None, o
 PY
 
