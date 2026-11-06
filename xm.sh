@@ -63,12 +63,26 @@ json_str() {
 # ------------------------------------------------------------------------------
 # Helpers - all auto-detect the connected Bluetooth headset card / MAC
 # ------------------------------------------------------------------------------
+# True when a standalone PulseAudio daemon is running or answering pactl
+# (e.g. pulled in as a dependency, replacing pipewire-pulse). It owns no bluez
+# cards and shares the socket with PipeWire, so profile switches fail at random.
+pulseaudio_conflict() {
+    pidof -q pulseaudio && return 0
+    ! timeout 3 pactl info 2>/dev/null | grep -q '^Server Name:.*PipeWire'
+}
+
+PULSE_HINT="PulseAudio is answering instead of PipeWire. Run: sudo pacman -S pipewire-pulse (accept removing pulseaudio), then log out and back in."
+
 find_card() {
     have pactl || return 1
     local c
     c=$(timeout 3 pactl list cards short 2>/dev/null | awk '/bluez_card/{print $2; exit}' || true)
     if [ -z "$c" ]; then
-        echo "No Bluetooth audio card found. Is your headset connected?" >&2
+        if pulseaudio_conflict; then
+            echo "No Bluetooth audio card found. $PULSE_HINT" >&2
+        else
+            echo "No Bluetooth audio card found. Is your headset connected?" >&2
+        fi
         return 1
     fi
     printf '%s\n' "$c"
@@ -225,6 +239,126 @@ battery_level() {
     return 0
 }
 
+# ------------------------------------------------------------------------------
+# Volume - the headset's own speaker (sink) and microphone (source), never the
+# system default device. PipeWire names them after the card's address:
+#   bluez_card.AA_BB_..  ->  bluez_output.AA_BB_...N  /  bluez_input.AA_BB_...N
+# (older stacks use AA:BB:.. in node names)
+# Only an exact address match counts: with the headset's node missing (Music
+# has no mic, standby has neither) a second Bluetooth device must never be
+# picked instead.
+# ------------------------------------------------------------------------------
+headset_node() {   # $1 = sink | source, $2 = card (optional, saves a lookup)
+    have pactl || return 0
+    local kind="$1" card="${2:-}" prefix addr
+    case "$kind" in
+        sink)   prefix=bluez_output ;;
+        source) prefix=bluez_input ;;
+        *)      return 0 ;;
+    esac
+    [ -n "$card" ] || card=$(find_card 2>/dev/null) || return 0
+    addr=${card#bluez_card.}
+    # Address with underscores (current PipeWire) or colons (older stacks),
+    # optionally followed by a ".N" / ".profile" suffix.
+    timeout 3 pactl list "${kind}s" short 2>/dev/null \
+        | awk -v p="$prefix.$addr" -v c="$prefix.${addr//_/:}" '
+            $2 ~ /\.monitor$/ { next }
+            $2 == p || $2 == c || index($2, p".") == 1 || index($2, c".") == 1 { print $2; exit }
+        ' || true
+}
+
+# Volume of a node in percent (front-left channel), empty when unknown.
+node_volume() {   # $1 = sink | source, $2 = node name
+    [ -n "$2" ] || return 0
+    timeout 2 pactl "get-$1-volume" "$2" 2>/dev/null \
+        | awk 'match($0, /[0-9]+%/) { print substr($0, RSTART, RLENGTH - 1); exit }' || true
+}
+
+# "yes" / "no", empty when unknown.
+node_muted() {   # $1 = sink | source, $2 = node name
+    [ -n "$2" ] || return 0
+    timeout 2 pactl "get-$1-mute" "$2" 2>/dev/null \
+        | awk '/Mute:/ { print $2; exit }' || true
+}
+
+# "Label: 54%" or "Label: 54% (muted)"; fails when the level is unknown.
+print_volume_line() {   # $1 = sink | source, $2 = node, $3 = label
+    local vol
+    vol=$(node_volume "$1" "$2")
+    [ -n "$vol" ] || return 1
+    if [ "$(node_muted "$1" "$2")" = "yes" ]; then
+        echo "$3 ${vol}% (muted)"
+    else
+        echo "$3 ${vol}%"
+    fi
+}
+
+# xm volume / xm mic-volume
+#   (none)          print the current level
+#   0-100 | N%      set an absolute level (values above 100 are capped)
+#   +N | -N         nudge the level, kept inside 0-100
+#   mute | unmute | toggle
+volume_command() {   # $1 = sink | source, $2 = argument (optional)
+    local kind="$1" arg="${2:-}" node label cur level
+    if [ "$kind" = "sink" ]; then label="Speaker"; else label="Mic"; fi
+
+    node=$(headset_node "$kind")
+    if [ -z "$node" ]; then
+        if [ "$kind" = "source" ] && [ "$(machine_status)" = "a2dp" ]; then
+            echo "The headset mic only exists in the Call profile. Run: $APP_NAME call" >&2
+        else
+            echo "No headset ${label,,} found. Is your headset connected?" >&2
+        fi
+        return 1
+    fi
+
+    case "$arg" in
+        "")
+            print_volume_line "$kind" "$node" "$label:" \
+                || { echo "Could not read the ${label,,} volume." >&2; return 1; }
+            return 0
+            ;;
+        mute)   timeout 3 pactl "set-$kind-mute" "$node" 1      || return 1; echo "$label muted";   return 0 ;;
+        unmute) timeout 3 pactl "set-$kind-mute" "$node" 0      || return 1; echo "$label unmuted"; return 0 ;;
+        toggle)
+            timeout 3 pactl "set-$kind-mute" "$node" toggle || return 1
+            if [ "$(node_muted "$kind" "$node")" = "yes" ]; then
+                echo "$label muted"
+            else
+                echo "$label unmuted"
+            fi
+            return 0
+            ;;
+        +[0-9]*|-[0-9]*)
+            [[ "${arg%\%}" =~ ^[+-][0-9]{1,3}$ ]] || { echo "Not a volume step: $arg" >&2; return 2; }
+            cur=$(node_volume "$kind" "$node")
+            [ -n "$cur" ] || { echo "Could not read the ${label,,} volume." >&2; return 1; }
+            arg=${arg%\%}
+            if [ "${arg:0:1}" = "-" ]; then
+                level=$(( cur - 10#${arg:1} ))
+            else
+                level=$(( cur + 10#${arg:1} ))
+            fi
+            ;;
+        [0-9]*)
+            [[ "${arg%\%}" =~ ^[0-9]{1,3}$ ]] || { echo "Not a volume level: $arg (use 0-100)" >&2; return 2; }
+            level=$(( 10#${arg%\%} ))
+            ;;
+        *)
+            echo "Unknown volume option: $arg (use 0-100, +N, -N, mute, unmute or toggle)" >&2
+            return 2
+            ;;
+    esac
+
+    [ "$level" -lt 0 ]   && level=0
+    [ "$level" -gt 100 ] && level=100
+    timeout 3 pactl "set-$kind-volume" "$node" "${level}%" || {
+        echo "Could not set the ${label,,} volume." >&2
+        return 1
+    }
+    echo "$label volume: ${level}%"
+}
+
 wait_for_card() {
     local i=0
     while [ "$i" -lt 20 ]; do
@@ -309,17 +443,39 @@ print_info_json() {
 
     [ -n "$mac" ] || mac=""
 
+    local sink src spk_vol spk_mute mic_vol mic_mute
+    sink=""; src=""
+    if [ -n "$card" ]; then
+        sink=$(headset_node sink "$card")
+        src=$(headset_node source "$card")
+    fi
+    spk_vol=$(node_volume sink "$sink")
+    spk_mute=$(node_muted sink "$sink")
+    mic_vol=$(node_volume source "$src")
+    mic_mute=$(node_muted source "$src")
+
     printf '{"state":"%s","profile":%s,"codec":%s,"device":%s,"mac":%s,' \
         "$(json_str "$state")" \
         "$([ -n "$prof" ]   && printf '"%s"' "$(json_str "$prof")"   || printf 'null')" \
         "$([ -n "$codec" ]  && printf '"%s"' "$(json_str "$codec")"  || printf 'null')" \
         "$([ -n "$name" ]   && printf '"%s"' "$(json_str "$name")"   || printf 'null')" \
         "$([ -n "$mac" ]    && printf '"%s"' "$(json_str "$mac")"    || printf 'null')"
-    printf '"mic":%s,"connected":%s,"wp_config":%s,"battery":%s}\n' \
+    printf '"mic":%s,"connected":%s,"wp_config":%s,"battery":%s,' \
         "$([ -n "$mic" ] && printf 'true' || printf 'false')" \
         "$([ "$conn" = "yes" ] && printf 'true' || printf 'false')" \
         "$wp" \
         "$([ -n "$battery" ] && printf '%s' "$battery" || printf 'null')"
+    printf '"speaker_volume":%s,"speaker_muted":%s,"mic_volume":%s,"mic_muted":%s}\n' \
+        "$(json_int "$spk_vol")" "$(json_bool "$spk_mute")" \
+        "$(json_int "$mic_vol")" "$(json_bool "$mic_mute")"
+}
+
+json_int() {
+    case "$1" in ''|*[!0-9]*) printf 'null' ;; *) printf '%d' "$((10#$1))" ;; esac
+}
+
+json_bool() {
+    case "$1" in yes) printf 'true' ;; no) printf 'false' ;; *) printf 'null' ;; esac
 }
 
 print_info_human() {
@@ -360,6 +516,10 @@ print_info_human() {
     fi
     local battery; battery=$(battery_level "$mac")
     [ -n "$battery" ] && echo "Battery: ${battery}%"
+    if [ -n "$card" ]; then
+        print_volume_line sink   "$(headset_node sink "$card")"   "Speaker:" || true
+        print_volume_line source "$(headset_node source "$card")" "Mic vol:" || true
+    fi
     return 0
 }
 
@@ -704,6 +864,9 @@ run_doctor() {
     done
     if pactl info >/dev/null 2>&1; then
         pass "PulseAudio/PipeWire server reachable"
+        if pulseaudio_conflict; then
+            fail "standalone PulseAudio is running. $PULSE_HINT"
+        fi
     else
         fail "cannot reach the PipeWire/PulseAudio server"
     fi
@@ -808,6 +971,10 @@ Usage: $APP_NAME <command> [--json]
   connect   Connect the known headset without resetting its link
   disconnect Disconnect the headset (keep it paired)
   toggle    Toggle the headset Bluetooth connection
+  volume [0-100|+N|-N|mute|unmute|toggle]
+            Show or set the headset speaker volume (capped at 100%)
+  mic-volume [0-100|+N|-N|mute|unmute|toggle]
+            Show or set the headset mic volume (Call profile only)
   reset     Reconnect the headset to clear a dead/silent mic link
   reconnect Alias for reset
   fix       reconnect + switch to 'call' profile in one shot (pre-meeting one-liner)
@@ -844,6 +1011,14 @@ case "$cmd" in
     music)
         require pactl bluetoothctl
         set_profile a2dp-sink
+        ;;
+    volume|mic-volume)
+        require pactl
+        [ "$#" -le 2 ] || { echo "Usage: $APP_NAME $cmd [0-100|+N|-N|mute|unmute|toggle]" >&2; exit 2; }
+        if [ "$cmd" = "volume" ]; then kind=sink; else kind=source; fi
+        rc=0
+        volume_command "$kind" "${2:-}" || rc=$?
+        exit "$rc"
         ;;
     status)
         require pactl bluetoothctl

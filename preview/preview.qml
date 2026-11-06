@@ -197,6 +197,12 @@ Window {
             base.codec = "MSBC"
             base.mic = true
         }
+        // Volume nodes exist only in a real profile: Music has the speaker,
+        // Call has the speaker and the mic.
+        base.speaker_volume = (base.state === "a2dp" || base.state === "hfp") ? 54 : null
+        base.speaker_muted  = base.speaker_volume === null ? null : false
+        base.mic_volume     = base.state === "hfp" ? 70 : null
+        base.mic_muted      = base.mic_volume === null ? null : false
         return base
     }
 

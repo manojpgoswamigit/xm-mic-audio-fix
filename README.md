@@ -130,6 +130,7 @@ A native Plasma 6 desktop applet that brings one-click audio profile control dir
 - **Device-aware header**: a state-tinted headset tile, a device name above the status chips, compact Connect/Disconnect control, a profile chip with the active codec (`LDAC`, `AAC`, `mSBC`), a battery chip with its level glyph, and a busy spinner while a command runs.
 - **Compact profile cards**: **Call** and **Music** targets with an icon, title, subtitle, an active check badge, hover feedback, and accent borders.
 - **Compact idle layout**: Call/Music stay first, the mic panel expands when testing or showing results, and connection progress keeps the current controls in place.
+- **Headset volume sliders**: speaker and microphone levels for the headset itself (not the system default device), tinted to match the Music and Call cards. Click the icon to mute; arrow keys and the mouse wheel step by 5%. The mic slider is live only in Call and stays visible but greyed out in Music, so the popup never jumps in height.
 - **Live microphone test**: one click switches to Call if needed, records 5 seconds, and fills a **50-bar waveform from real 100 ms samples as you speak** with `LIVE` / `QUIET` / `SILENT`, peak dBFS and duration.
 - **Connection toggle**: a theme-aware **Connect / Disconnect** header button keeps the headset paired; press <kbd>D</kbd> to toggle.
 - **Connection recovery**: **Reconnect** retries the Bluetooth link up to three times, waits for the audio card and its profiles, and verifies the link before reporting success. **Fix** = Reconnect + Call.
@@ -189,13 +190,16 @@ xm music       # Switch to A2DP (hi-fi output) after a meeting
 | `xm connect` | Connects the known headset without resetting an active link | Headset is paired and powered on |
 | `xm disconnect` | Disconnects the headset and keeps it paired | Stop using headphone audio |
 | `xm toggle` | Connects if disconnected, disconnects if connected | Keyboard shortcuts and scripts |
+| `xm volume [0-100\|+N\|-N]` | Shows or sets the headset speaker level (capped at 100%) | Volume keys, scripts |
+| `xm volume mute\|unmute\|toggle` | Mutes or unmutes the headset speaker | Volume keys, scripts |
+| `xm mic-volume [...]` | Same options for the headset mic (Call profile only) | Raise a quiet mic before a meeting |
 | `xm reset` | Reconnects headset to clear stalled link | Mic shows connected but produces no audio |
 | `xm reconnect` | Alias for `reset`, with up to 3 link attempts | Same as above, explicit name |
 | `xm fix` | Runs `reconnect` followed by `call` | Pre-meeting one-shot rescue |
 | `xm status` | Displays active profile, device and codec | Check current audio configuration |
 | `xm status --machine` | Outputs single token (`a2dp`/`hfp`/`off`/`none`) | Scripting, polybar, waybar, or monitoring |
 | `xm info` | Device, MAC, codec, mic, battery and config | Human-readable snapshot |
-| `xm info --json` | The same snapshot as one JSON object | Panel applets, status bars |
+| `xm info --json` | The same snapshot as one JSON object, including speaker/mic levels | Panel applets, status bars |
 | `xm doctor` | Inspects PipeWire, BlueZ & WirePlumber | Diagnostic report for troubleshooting |
 | `xm defaults-reset` | Restores WirePlumber automatic switching | Revert custom audio rules |
 
@@ -363,13 +367,16 @@ bash tests/test-connection.sh
 ./tests/test-profile-switch.sh
 ./tests/test-live-waveform.sh
 ./tests/test-widget-config.sh
+./tests/test-volume.sh
 ```
 
 They prove that Call/Music return as soon as the profile is active, that cards
 offering only the mandatory CVSD/SBC profiles still switch, that a non-Sony
 audio device is detected without relying on model names, and that
 `xm test --live-file` publishes real levels during recording, with the final
-JSON still containing 50 bars. The icon test pins the semantic icon map, the
+JSON still containing 50 bars. The volume test proves `xm volume` and
+`xm mic-volume` act only on the headset's own nodes, cap levels to 0-100,
+reject bad input before it reaches `pactl`, and refuse the mic in Music. The icon test pins the semantic icon map, the
 state-aware panel glyph, the About GitHub mark, and the live-audio layout
 contract. The configuration test keeps `main.xml`,
 the `cfg_<key>` aliases in the config page, and every `readCfg()` lookup in
@@ -385,7 +392,7 @@ are rendered from the real QML with:
 ## 🛡️ Design Principles
 
 - **Zero Audio Stack Corruption**: The widget never touches PipeWire or BlueZ APIs directly. It delegates all operations to `~/.local/bin/xm`.
-- **Single-Flight Execution**: Exactly one action runs at a time with strict timeouts. Clicking buttons repeatedly will never spawn runaway child processes.
+- **Single-Flight Execution**: Exactly one action runs at a time with strict timeouts. Clicking buttons repeatedly will never spawn runaway child processes. Volume sliders use their own single-flight lane (one `xm volume` call at a time, newest value wins), so dragging never waits behind a profile switch.
 - **No Fixed Delays**: Call/Music wait for the profile and HFP mic source to actually become active, usually in about 50 ms, instead of padding every switch with a one-second sleep.
 - **Fail-Safe Fallbacks**: Missing Bluetooth devices, asleep headsets, or disconnected profiles degrade gracefully into clear, recoverable UI states.
 - **Privacy & Safety**: Operates entirely in user space without requiring `sudo` privileges.
