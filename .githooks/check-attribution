@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# =============================================================================
+#  check-attribution - keep AI tools out of commit metadata
+# =============================================================================
+#  Rule: no commit message, author, committer, tag message, PR title or PR body
+#  may name an AI tool (Claude, Codex, Gemini, Copilot, OpenCode, Cline,
+#  DeepSeek, ...) or carry an AI attribution trailer.
+#
+#  Used by .githooks/commit-msg, .githooks/pre-push and the GitHub workflow.
+#
+#    check-attribution --message FILE    a commit message file (comments ignored)
+#    check-attribution --ident  "NAME <EMAIL>"
+#    check-attribution --commits RANGE   every commit in a rev-list range
+#    check-attribution --tag    TAG      an annotated tag's tagger and message
+#    check-attribution --text   LABEL    text on stdin (PR title / body)
+#
+#  Exit 0 = clean, 1 = a mention was found, 2 = usage error.
+# =============================================================================
+
+set -euo pipefail
+
+# Case-insensitive ERE fragments. Word boundaries keep ordinary words such as
+# "decline", "aim" or "mouse cursor" from matching.
+PATTERNS=(
+    'claude' 'anthropic'
+    'openai' 'chat ?gpt' '\bgpt-?[0-9]' 'codex'
+    'gemini' '\bbard\b' 'google ai studio'
+    'copilot'
+    'opencode' '\bcline\b' 'roo ?code' 'roo-cline' 'kilo ?code'
+    'deepseek'
+    'cursor ?(ai|agent|bot|ide)\b' 'cursoragent' 'cursor\.(com|sh)'
+    'windsurf' 'codeium' '\baider\b' 'tabnine' 'codewhisperer' 'amazon q\b'
+    '\bqwen' 'mistral' '\bllama' '\bgrok\b' '\bkimi\b' 'moonshot' 'perplexity'
+    'devin\.ai' '\bdevin ai\b' 'replit agent' 'sourcegraph cody' 'jetbrains ai'
+    '\bai\b' '\bllms?\b' 'artificial intelligence' 'language model'
+)
+REGEX=$(IFS='|'; printf '%s' "${PATTERNS[*]}")
+
+found=0
+
+# check LABEL < text : print every offending line, return 1 if any.
+# (It runs at the end of a pipeline, so it cannot set a variable itself.)
+check() {
+    local label="$1" hits
+    hits=$(grep -inE "$REGEX" || true)
+    [ -z "$hits" ] && return 0
+    echo "✗ AI tool mentioned in $label:" >&2
+    printf '%s\n' "$hits" | sed 's/^/    line /' >&2
+    return 1
+}
+
+check_commit() {
+    local sha="$1" subject
+    subject=$(git log -1 --format='%h %s' "$sha")
+    git log -1 --format='%an <%ae>%n%cn <%ce>' "$sha" | check "author/committer of $subject" || found=1
+    git log -1 --format='%B' "$sha" | check "message of $subject" || found=1
+}
+
+case "${1:-}" in
+    --message)
+        [ -f "${2:-}" ] || { echo "usage: $0 --message FILE" >&2; exit 2; }
+        git stripspace --strip-comments < "$2" | check "the commit message" || found=1 ;;
+    --ident)
+        [ -n "${2:-}" ] || { echo "usage: $0 --ident 'NAME <EMAIL>'" >&2; exit 2; }
+        printf '%s\n' "$2" | check "the author/committer" || found=1 ;;
+    --commits)
+        [ -n "${2:-}" ] || { echo "usage: $0 --commits RANGE" >&2; exit 2; }
+        # shellcheck disable=SC2086  # a range may be several rev-list args
+        for sha in $(git rev-list $2); do check_commit "$sha"; done ;;
+    --tag)
+        [ -n "${2:-}" ] || { echo "usage: $0 --tag TAG" >&2; exit 2; }
+        if [ "$(git cat-file -t "$2")" = tag ]; then
+            git cat-file -p "$2" | sed '1,/^$/{/^tagger /!d}' | check "tag $2" || found=1
+        fi ;;
+    --text)
+        check "${2:-input}" || found=1 ;;
+    *)
+        sed -n '2,/^# =====/p' "$0" | sed '1d;$d;s/^# \{0,1\}//' >&2
+        exit 2 ;;
+esac
+
+if [ "$found" -ne 0 ]; then
+    cat >&2 <<'EOF'
+
+This repository does not allow AI tool names or AI attribution in commit
+messages, authors, committers, tags or pull requests. Remove the mention
+(for example a Co-Authored-By trailer) and try again.
+EOF
+    exit 1
+fi
+exit 0

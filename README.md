@@ -368,6 +368,7 @@ bash tests/test-connection.sh
 ./tests/test-live-waveform.sh
 ./tests/test-widget-config.sh
 ./tests/test-volume.sh
+./tests/test-commit-attribution.sh
 ```
 
 They prove that Call/Music return as soon as the profile is active, that cards
@@ -386,6 +387,27 @@ are rendered from the real QML with:
 ```bash
 ./preview/render-assets.sh
 ```
+
+### Commit attribution rule
+
+Commit messages, authors, committers, tags and pull requests must never name an
+AI tool (Claude, Codex, Gemini, Copilot, OpenCode, Cline, DeepSeek, Cursor and
+others) or carry an AI `Co-Authored-By` trailer. Enable the hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+- `commit-msg` refuses such a commit as it is made.
+- `pre-push` checks every commit and annotated tag about to be pushed, so
+  commits made with `--no-verify`, merges, rebases and cherry-picks are caught.
+- The `Commit attribution` GitHub workflow repeats the check on every pull
+  request (title, body and commits) and every push to `main`, because local
+  hooks can be skipped.
+
+The word list lives in `.githooks/check-attribution`. Word boundaries keep
+ordinary words such as "decline" or "mouse cursor" from matching, and
+`tests/test-commit-attribution.sh` pins both sides.
 
 ---
 
