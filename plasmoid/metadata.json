@@ -13,7 +13,7 @@
         "Id": "com.manojpgoswami.xmwidget",
         "License": "MIT",
         "Name": "XM Headset",
-        "Version": "2.0",
+        "Version": "2.1",
         "Website": "https://github.com/manojpgoswamigit/xm-mic-audio-fix"
     },
     "X-Plasma-API-Minimum-Version": "6.0",

@@ -1,13 +1,18 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 ### Plasma widget
 - Speaker and microphone volume sliders for the headset, with click-to-mute, keyboard and wheel control, shown only in Music and Call (mic live in Call only).
+- Connect / Disconnect button in the header (shortcut <kbd>D</kbd>) that keeps the headset paired.
+- Compact popup: Call/Music first, a smaller idle mic check that expands while recording, and a header that keeps the device name and progress visible during actions.
+- Better narrow-header layout, light-theme contrast and keyboard focus; refreshed screenshots and demo.
 
 ### CLI (`xm`)
 - New `xm volume` and `xm mic-volume` commands: show, set (0-100), nudge (+N / -N), mute, unmute, toggle.
 - `xm info` and `xm info --json` report the headset speaker and mic levels.
+- New `xm connect`, `xm disconnect` and `xm toggle`, which verify the Bluetooth state and leave an already matching link alone.
+- A standalone PulseAudio daemon running alongside pipewire-pulse is now detected and explained, in profile-switch errors and in `xm doctor`.
 
 ## 2.0.0
 
