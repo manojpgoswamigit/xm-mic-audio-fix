@@ -362,6 +362,7 @@ headset-free regression tests using fake `pactl`/`parec`/`bluetoothctl` binaries
 ```bash
 bash tests/test-connection.sh
 ./tests/test-widget-ui.sh  # requires Qt 6 Quick Test and Plasma QML modules
+./tests/test-widget-e2e.sh # requires Plasma 6, dbus-run-session and Python 3
 ./tests/test-widget-icons.sh
 ./tests/test-generic-headset.sh
 ./tests/test-profile-switch.sh
@@ -371,7 +372,11 @@ bash tests/test-connection.sh
 ./tests/test-commit-attribution.sh
 ```
 
-They prove that Call/Music return as soon as the profile is active, that cards
+The end-to-end suite runs the applet offscreen in an isolated Plasma session
+with a stateful headset fixture. It checks command dispatch, volume read-back,
+profile changes, the live mic test, reconnect and confirmation flows.
+
+The CLI suites prove that Call/Music return as soon as the profile is active, that cards
 offering only the mandatory CVSD/SBC profiles still switch, that a non-Sony
 audio device is detected without relying on model names, and that
 `xm test --live-file` publishes real levels during recording, with the final
@@ -391,8 +396,7 @@ are rendered from the real QML with:
 ### Commit attribution rule
 
 Commit messages, authors, committers, tags and pull requests must never name an
-AI tool (Claude, Codex, Gemini, Copilot, OpenCode, Cline, DeepSeek, Cursor and
-others) or carry an AI `Co-Authored-By` trailer. Enable the hooks once per clone:
+assistant tool or carry a tool attribution trailer. Enable the hooks once per clone:
 
 ```bash
 git config core.hooksPath .githooks
