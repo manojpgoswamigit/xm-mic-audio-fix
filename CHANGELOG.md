@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.2.0
+
+### Plasma widget
+
+- Speaker and microphone sliders update immediately with keyboard and wheel input.
+- Queued volume changes dispatch sooner by overlapping the cooldown with the active command.
+- The popup skips duplicate status requests and lets an active device refresh finish.
+
+### CLI (`xm`)
+
+- `xm info --json` reuses one BlueZ device response for the headset name, connection state and battery.
+
+### Development
+
+- Added an end-to-end Plasma suite for volume, profiles, the live mic test, connection recovery and restore confirmation.
+- Added local hooks and a GitHub check for commit attribution.
+
 ## 2.1.0
 
 ### Plasma widget
