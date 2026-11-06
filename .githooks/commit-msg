@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Reject commits whose message, author or committer names an AI tool.
+set -euo pipefail
+check="$(dirname "$0")/check-attribution"
+ident() { git var "$1" | sed 's/ [0-9]* [-+][0-9]*$//'; }   # drop the timestamp
+
+rc=0
+"$check" --message "$1"                     || rc=1
+"$check" --ident "$(ident GIT_AUTHOR_IDENT)"    || rc=1
+"$check" --ident "$(ident GIT_COMMITTER_IDENT)" || rc=1
+exit "$rc"

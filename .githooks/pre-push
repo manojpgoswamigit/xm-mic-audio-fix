@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Last local gate: check every commit and annotated tag about to be pushed,
+# including ones made with --no-verify, by a merge, a rebase or a cherry-pick.
+set -euo pipefail
+check="$(dirname "$0")/check-attribution"
+remote="$1"
+zero=0000000000000000000000000000000000000000
+
+rc=0
+while read -r local_ref local_sha _remote_ref remote_sha; do
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac   # branch/tag deletion
+
+    if [ "$(git cat-file -t "$local_sha")" = tag ]; then
+        "$check" --tag "$local_ref" || rc=1
+        local_sha=$(git rev-parse "$local_sha^{commit}")
+    fi
+
+    if [ "$remote_sha" = "$zero" ] || ! git cat-file -e "$remote_sha" 2>/dev/null; then
+        # New ref (or unknown remote tip): only commits the remote lacks.
+        range="$local_sha --not --remotes=$remote"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+    "$check" --commits "$range" || rc=1
+done
+
+[ "$rc" -eq 0 ] || echo "Push refused. Rewrite the commits above (git rebase -i / git commit --amend)." >&2
+exit "$rc"

@@ -1,0 +1,55 @@
+# Server-side copy of .githooks: local hooks can be skipped (--no-verify,
+# GitHub's web editor, squash merges), so every PR and every push to main is
+# checked again here. Rules live in .githooks/check-attribution.
+name: Commit attribution
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  push:
+    branches: [main]
+    tags: ['*']
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull request title and body
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s\n' "$TITLE" | .githooks/check-attribution --text "the PR title"
+          printf '%s\n' "$BODY"  | .githooks/check-attribution --text "the PR body"
+
+      - name: Pull request commits
+        if: github.event_name == 'pull_request'
+        run: >-
+          .githooks/check-attribution --commits
+          "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+      - name: Pushed commits
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          if git cat-file -e "$BEFORE" 2>/dev/null; then
+            .githooks/check-attribution --commits "$BEFORE..$AFTER"
+          else
+            .githooks/check-attribution --commits "-1 $AFTER"
+          fi
+
+      - name: Pushed tag
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        run: |
+          git fetch --force origin "${{ github.ref }}:${{ github.ref }}"
+          .githooks/check-attribution --tag "${{ github.ref }}"
