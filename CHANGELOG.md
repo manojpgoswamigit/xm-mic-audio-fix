@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Plasma widget
+- Speaker and microphone volume sliders for the headset, with click-to-mute, keyboard and wheel control, shown only in Music and Call (mic live in Call only).
+
+### CLI (`xm`)
+- New `xm volume` and `xm mic-volume` commands: show, set (0-100), nudge (+N / -N), mute, unmute, toggle.
+- `xm info` and `xm info --json` report the headset speaker and mic levels.
+
 ## 2.0.0
 
 ### Plasma widget

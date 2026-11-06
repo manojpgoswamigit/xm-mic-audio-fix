@@ -87,7 +87,7 @@ The panel colour follows that token:
 | `error` | warning triangle | red |
 | busy / loading | headset, dimmed | amber / grey |
 
-While the popup is open, the widget also runs `xm info --json` (about 120 ms) to
+While the popup is open, the widget also runs `xm info --json` (about 130 ms) to
 fill the header with the device name, codec and battery. That call is deliberately
 kept out of the 2-second panel poll, so Bluetooth is not woken unnecessarily.
 
@@ -110,6 +110,15 @@ Connection commands verify the resulting Bluetooth state; an already connected
 headset is left connected without resetting its link. Like the existing recovery
 commands, detection handles one headset at a time and falls back to the first
 known audio device when none is connected.
+
+The **volume** section sits under Call/Music and appears only in those two
+profiles. Speaker and microphone sliders control the headset's own nodes
+(`bluez_output.*` / `bluez_input.*`), never the system default device. The mic
+row is greyed out in Music because A2DP has no microphone, and it stays usable
+during a mic test so a quiet mic can be raised on the spot. Changes run
+`xm volume` / `xm mic-volume` through a second, tiny runner that keeps only the
+newest value, so a slider drag never waits behind a profile switch. Levels are
+read back from `xm info --json`.
 
 The popup sizes itself to its content: Call/Music are the primary actions,
 the idle microphone check is compact, and recording/results expand the waveform.
