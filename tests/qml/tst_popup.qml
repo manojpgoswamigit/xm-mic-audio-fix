@@ -204,6 +204,8 @@ TestCase {
         compare(speakerVolumeSpy.signalArguments[0][0], 59)
         // main.qml echoes the new level back through info (optimistic update).
         withInfo({speaker_volume: 59})
+        fuzzyCompare(slider.handle.x + slider.handle.width / 2,
+                     slider.leftPadding + slider.visualPosition * slider.availableWidth, 0.1)
         wait(20)
         compare(findChild(popup, "speakerVolumeValue").text, "59%")
         keyClick(Qt.Key_Left)

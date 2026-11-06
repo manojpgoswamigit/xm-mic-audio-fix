@@ -138,20 +138,26 @@ current_profile() {
     ' || true
 }
 
+bluez_device_info() {
+    [ -n "$1" ] && have bluetoothctl || return 0
+    timeout 2 bluetoothctl info "$1" 2>/dev/null || true
+}
+
 # Human name of the headset, from BlueZ when possible, else from the card.
 device_name() {
     local mac name card
-    mac=$(find_mac 1 2>/dev/null) || mac=""
-    if [ -n "$mac" ] && have bluetoothctl; then
-        name=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null \
-            | awk -F': ' '/^[[:space:]]*Name:/{print $2; exit}' || true)
-        if [ -n "$name" ]; then
-            printf '%s\n' "$name"
-            return 0
-        fi
+    if [ "$#" -ge 2 ]; then
+        name=$(awk -F': ' '/^[[:space:]]*Name:/{print $2; exit}' <<< "$2")
+        card=$1
+    else
+        mac=$(find_mac 1 2>/dev/null) || mac=""
+        name=$(bluez_device_info "$mac" | awk -F': ' '/^[[:space:]]*Name:/{print $2; exit}')
+        card=""
+        [ -n "$name" ] || card=$(find_card 2>/dev/null) || card=""
     fi
-    card=$(find_card 2>/dev/null) || card=""
-    if [ -n "$card" ]; then
+    if [ -n "$name" ]; then
+        printf '%s\n' "$name"
+    elif [ -n "$card" ]; then
         timeout 2 pactl list cards 2>/dev/null | awk -v c="$card" '
             $0 ~ "Name: "c {f=1}
             f && /device.description/ {sub(/.*= "/,""); sub(/".*/,""); print; exit}
@@ -220,13 +226,16 @@ list_card_profiles() {
 battery_level() {
     local mac="$1" v path
     [ -n "$mac" ] || return 0
-    if have bluetoothctl; then
-        v=$(timeout 2 bluetoothctl info "$mac" 2>/dev/null \
-            | awk -F'[()]' '/Battery Percentage/{print $2; exit}' || true)
-        if [ -n "$v" ]; then
-            printf '%s\n' "$v"
-            return 0
-        fi
+    local bluez
+    if [ "$#" -ge 2 ]; then
+        bluez=$2
+    else
+        bluez=$(bluez_device_info "$mac")
+    fi
+    v=$(awk -F'[()]' '/Battery Percentage/{print $2; exit}' <<< "$bluez")
+    if [ -n "$v" ]; then
+        printf '%s\n' "$v"
+        return 0
     fi
     have busctl || return 0
     path=$(timeout 2 busctl --system tree org.bluez 2>/dev/null \
@@ -426,16 +435,17 @@ profile_label() {
 }
 
 print_info_json() {
-    local state card prof mac name codec mic battery conn wp
+    local state card prof mac name codec mic battery conn wp bluez
     state=$(machine_status)
     card=$(find_card 2>/dev/null) || card=""
     prof=$(current_profile 2>/dev/null) || prof=""
     mac=$(find_mac 1 2>/dev/null) || mac=""
-    name=$(device_name)
+    bluez=$(bluez_device_info "$mac")
+    name=$(device_name "$card" "$bluez")
     codec=$(active_codec)
     mic=$(mic_source)
-    conn=$(device_connected)
-    battery=$(battery_level "$mac")
+    conn=$(awk '/Connected:/{print $2; exit}' <<< "$bluez")
+    battery=$(battery_level "$mac" "$bluez")
     case "$battery" in
         ''|*[!0-9]*) battery="" ;;
     esac
