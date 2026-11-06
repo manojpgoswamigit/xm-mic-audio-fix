@@ -10,6 +10,7 @@
 //    message     transient result of the last action
 //    recovery    only when the headset is absent or unreadable
 //    cards       Call / Music
+//    volume      headset speaker + mic sliders (Music / Call only)
 //    mic test    idle, listening or waveform + verdict
 //    helpers     Reconnect, Fix for meeting
 //    footer      Restore audio defaults
@@ -55,6 +56,8 @@ Item {
     signal restoreRequested()
     signal confirmAccepted()
     signal confirmCancelled()
+    signal volumeRequested(string which, int value)   // which: speaker | mic
+    signal muteRequested(string which, bool muted)
 
     // ---- external state as readable values -------------------------------
     readonly property var infoObj: info || ({})
@@ -116,6 +119,19 @@ Item {
     readonly property bool canConnect: canAct && (connected || state === "none")
     readonly property bool canSwitch: connected && canAct
     readonly property bool showProfiles: connected
+
+    // Volume lives on the headset's own nodes, which exist only in a real
+    // audio profile: Music has a speaker, Call has a speaker and a mic.
+    readonly property bool showVolume: state === "a2dp" || state === "hfp"
+    function volumeOf(key) {
+        var v = infoObj[key]
+        return (v === null || v === undefined || isNaN(Number(v))) ? -1
+             : Math.max(0, Math.min(100, Math.round(Number(v))))
+    }
+    readonly property int  speakerVolume: volumeOf("speaker_volume")
+    readonly property bool speakerMuted:  infoObj.speaker_muted === true
+    readonly property int  micVolume:     volumeOf("mic_volume")
+    readonly property bool micMuted:      infoObj.mic_muted === true
 
     readonly property string deviceName: {
         var n = infoObj.device
@@ -457,6 +473,64 @@ Item {
                 enabled: root.canSwitch
                 tooltipText: "Switch to A2DP hi-fi output (M)"
                 onClicked: root.musicRequested()
+            }
+        }
+
+        // ---- volume -----------------------------------------------------
+        Rectangle {
+            objectName: "volumePanel"
+            Layout.fillWidth: true
+            visible: root.showVolume
+            implicitHeight: volumeCol.implicitHeight + Kirigami.Units.smallSpacing * 2.4
+            radius: Kirigami.Units.smallSpacing * 1.8
+            color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                           Kirigami.Theme.textColor.b, root.isDark ? 0.045 : 0.035)
+            border.width: 1
+            border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                                  Kirigami.Theme.textColor.b, 0.12)
+
+            ColumnLayout {
+                id: volumeCol
+                anchors.fill: parent
+                anchors.leftMargin:   Kirigami.Units.largeSpacing
+                anchors.rightMargin:  Kirigami.Units.largeSpacing
+                anchors.topMargin:    Kirigami.Units.smallSpacing * 1.2
+                anchors.bottomMargin: Kirigami.Units.smallSpacing * 1.2
+                spacing: Kirigami.Units.smallSpacing
+
+                VolumeRow {
+                    objectName: "speakerVolume"
+                    Layout.fillWidth: true
+                    name: "Speaker"
+                    iconName: "audio-volume-high-symbolic"
+                    mutedIconName: "audio-volume-muted-symbolic"
+                    accentColor: root.colorA2dp
+                    value: root.speakerVolume
+                    muted: root.speakerMuted
+                    available: root.speakerVolume >= 0
+                    caption: "Not available yet"
+                    enabled: !root.busy
+                    onValueRequested: function (v) { root.volumeRequested("speaker", v) }
+                    onMuteRequested:  function (m) { root.muteRequested("speaker", m) }
+                }
+
+                VolumeRow {
+                    objectName: "micVolume"
+                    Layout.fillWidth: true
+                    name: "Microphone"
+                    iconName: "audio-input-microphone-symbolic"
+                    mutedIconName: "microphone-sensitivity-muted-symbolic"
+                    accentColor: root.colorHfp
+                    value: root.micVolume
+                    muted: root.micMuted
+                    available: root.state === "hfp" && root.micVolume >= 0
+                    caption: root.state === "hfp" ? "Not available yet" : "Call profile only"
+                    // The mic test asks people to raise the mic level, so it
+                    // stays adjustable while a test is running.
+                    enabled: !root.busy
+                    onValueRequested: function (v) { root.volumeRequested("mic", v) }
+                    onMuteRequested:  function (m) { root.muteRequested("mic", m) }
+                }
             }
         }
 

@@ -18,11 +18,13 @@
 //      into a visible, recoverable state. Nothing throws.
 //    * Exactly one command runs at a time (single flight) and every command
 //      has a hard timeout, so the UI can never get permanently stuck.
+//      Volume changes use their own small runner (newest value wins), so a
+//      slider drag never waits behind - or blocks - a profile switch.
 //    * Commands run through Plasma's own job runner, so no child process is
 //      ever owned by plasmashell and nothing is left behind when the applet
 //      is removed.
 //    * Fast polling (`status --machine`, ~15 ms) keeps the panel icon live.
-//      The richer `info --json` (~120 ms) is only fetched when the popup is
+//      The richer `info --json` (~130 ms) is only fetched when the popup is
 //      open and after an action, so Bluetooth is not woken every 2 seconds.
 // =============================================================================
 
@@ -293,6 +295,9 @@ PlasmoidItem {
             onRestoreRequested:   root.doRestoreDefaults()
             onConfirmAccepted:    root.acceptConfirm()
             onConfirmCancelled:   root.cancelConfirm()
+
+            onVolumeRequested: function (which, v) { root.setVolume(which, v) }
+            onMuteRequested:   function (which, m) { root.setMute(which, m) }
         }
     }
 
@@ -648,24 +653,190 @@ PlasmoidItem {
         if (busy || testing) {
             return
         }
-        run("info --json", "info", true, function (out, code) {
-            if (code !== 0) {
-                return
-            }
-            try {
-                var o = JSON.parse(trimEnd(out))
-                if (o && typeof o === "object") {
-                    root.info = o
-                    if (o.state === "a2dp" || o.state === "hfp" || o.state === "off"
-                            || o.state === "none" || o.state === "error") {
-                        root.headsetState = o.state
+        run("info --json", "info", true, applyInfo)
+    }
+
+    function applyInfo(out, code) {
+        if (code !== 0) {
+            return
+        }
+        try {
+            var o = JSON.parse(trimEnd(out))
+            if (o && typeof o === "object") {
+                // A snapshot taken before our last volume change landed
+                // would snap the slider back; keep the local values.
+                if (root.volumeInFlight()) {
+                    for (var w in root.volumeControls) {
+                        var c = root.volumeControls[w]
+                        if (root.info[c.level] !== undefined) o[c.level] = root.info[c.level]
+                        if (root.info[c.muted] !== undefined) o[c.muted] = root.info[c.muted]
                     }
                 }
-            } catch (e) {
-                // Keep the last known good snapshot: a parse error must never
-                // blank out a working header.
+                root.info = o
+                if (o.state === "a2dp" || o.state === "hfp" || o.state === "off"
+                        || o.state === "none" || o.state === "error") {
+                    root.headsetState = o.state
+                }
             }
-        })
+        } catch (e) {
+            // Keep the last known good snapshot: a parse error must never
+            // blank out a working header.
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Volume: a second, tiny runner. Each kind of change (speaker level,
+    // speaker mute, mic level, mic mute) keeps only its newest value, and at
+    // most one `xm volume` call is in flight, so a fast drag sends a handful
+    // of commands instead of hundreds.
+    // -------------------------------------------------------------------------
+    property var    volumeQueue:     ({})
+    property var    volumeQueueOrder: []
+    property string volumeSource:    ""
+    property int    volumeSeq:       0
+    property real   volumeHoldUntil: 0
+    readonly property int volumeHoldMs: 1500
+    // True while a change is queued, running, or only just landed. A function,
+    // not a binding: a binding on Date.now() would never re-evaluate.
+    function volumeInFlight() {
+        return volumeSource.length > 0 || volumeQueueOrder.length > 0
+            || Date.now() < volumeHoldUntil
+    }
+
+    // One place that knows how each control maps to xm and to info fields.
+    readonly property var volumeControls: ({
+        speaker: { cmd: "volume",     level: "speaker_volume", muted: "speaker_muted" },
+        mic:     { cmd: "mic-volume", level: "mic_volume",     muted: "mic_muted" }
+    })
+
+    Plasma5.DataSource {
+        id: volumeRunner
+        engine: "executable"
+        interval: 0
+
+        onNewData: function (sourceName, data) {
+            if (sourceName !== root.volumeSource) {
+                return
+            }
+            volumeRunner.connectedSources = []
+            root.volumeSource = ""
+            volumeTimeoutTimer.stop()
+            var code = (data["exit code"] === undefined) ? -1 : data["exit code"]
+            if (code !== 0) {
+                var err = root.trimEnd(data["stderr"] === undefined ? "" : String(data["stderr"]))
+                root.setMessage(err.length > 0 ? err.split("\n").pop()
+                                               : "Could not change the volume.")
+            }
+            volumeGapTimer.restart()
+        }
+    }
+
+    // Small gap between commands: lets a drag coalesce into fewer calls.
+    Timer {
+        id: volumeGapTimer
+        interval: 60
+        onTriggered: root.flushVolume()
+    }
+
+    // Longer than the worst case of `xm volume` (its own pactl timeouts add up
+    // to ~11 s), so a slow call is never overtaken by the next one.
+    Timer {
+        id: volumeTimeoutTimer
+        interval: 15000
+        onTriggered: {
+            volumeRunner.connectedSources = []
+            root.volumeSource = ""
+            root.flushVolume()
+        }
+    }
+
+    // Once the user stops touching the sliders, read back the real levels.
+    Timer {
+        id: volumeSettleTimer
+        interval: root.volumeHoldMs + 100
+        onTriggered: {
+            if (root.volumeInFlight()) {
+                restart()
+            } else {
+                root.refreshInfo()
+            }
+        }
+    }
+
+    function queueVolume(key, argv) {
+        var q = volumeQueue
+        q[key] = argv
+        volumeQueue = q
+        var order = volumeQueueOrder.filter(function (k) { return k !== key })
+        order.push(key)
+        volumeQueueOrder = order
+        volumeHoldUntil = Date.now() + volumeHoldMs
+        volumeSettleTimer.restart()
+        if (volumeSource.length === 0 && !volumeGapTimer.running) {
+            flushVolume()
+        }
+    }
+
+    function flushVolume() {
+        if (volumeSource.length > 0 || volumeQueueOrder.length === 0) {
+            return
+        }
+        var order = volumeQueueOrder.slice()
+        var key = order.shift()
+        volumeQueueOrder = order
+        var q = volumeQueue
+        var argv = q[key]
+        delete q[key]
+        volumeQueue = q
+
+        volumeSeq++
+        volumeSource = quotePath(xmBin) + " " + argv + " #vol=" + volumeSeq
+        volumeTimeoutTimer.restart()
+        volumeRunner.connectedSources = [volumeSource]
+    }
+
+    // Optimistic: the popup shows the new level at once, the command follows.
+    function patchInfo(fields) {
+        var o = {}
+        var cur = root.info || {}
+        for (var k in cur) {
+            o[k] = cur[k]
+        }
+        for (var f in fields) {
+            o[f] = fields[f]
+        }
+        root.info = o
+    }
+
+    function setVolume(which, value) {
+        var c = volumeControls[which]
+        if (!c) {
+            return
+        }
+        var v = Math.max(0, Math.min(100, Math.round(Number(value) || 0)))
+        var fields = {}
+        fields[c.level] = v
+        // Moving a muted slider unmutes it, like Plasma's own mixer.
+        var wasMuted = (root.info || {})[c.muted] === true
+        if (wasMuted) {
+            fields[c.muted] = false
+        }
+        patchInfo(fields)
+        queueVolume(which + "-level", c.cmd + " " + v)
+        if (wasMuted) {
+            queueVolume(which + "-mute", c.cmd + " unmute")
+        }
+    }
+
+    function setMute(which, muted) {
+        var c = volumeControls[which]
+        if (!c) {
+            return
+        }
+        var fields = {}
+        fields[c.muted] = !!muted
+        patchInfo(fields)
+        queueVolume(which + "-mute", c.cmd + (muted ? " mute" : " unmute"))
     }
 
     // -------------------------------------------------------------------------
@@ -718,7 +889,17 @@ PlasmoidItem {
             if (!run("call", "call", false, function (out, code, exitStatus) {
                 if (code === 0 && exitStatus === 0) {
                     setMessage("")
-                    startMicTest()
+                    // Show Call (and its mic level) before recording, so the
+                    // mic slider is live for the whole test.
+                    // Foreground on purpose: a background fetch could be
+                    // cancelled by the status poll, and the test never start.
+                    root.headsetState = "hfp"
+                    if (!root.run("info --json", "info", false, function (o, c) {
+                        root.applyInfo(o, c)
+                        root.startMicTest()
+                    })) {
+                        root.startMicTest()
+                    }
                 } else {
                     setMessage("Could not switch to Call. Try Reconnect, then test again.")
                     root.refreshInfo()
